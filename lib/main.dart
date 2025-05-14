@@ -26,7 +26,7 @@ void main() async {
 }
 
 class MyApp extends StatelessWidget {
-  final apiBaseUrl = 'https://your-api-url.com'; // Replace with your API URL
+  final apiBaseUrl = 'http://10.0.2.2:8000'; // Replace with your API URL
 
   MyApp({Key? key}) : super(key: key);
 

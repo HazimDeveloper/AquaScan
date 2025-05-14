@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:water_watch/models/report_model.dart' as route_model;
+import 'dart:math';
 import '../../config/theme.dart';
 import '../../models/report_model.dart';
 import '../../models/route_model.dart' as route_model;
@@ -11,7 +11,7 @@ class RouteMapWidget extends StatefulWidget {
   final route_model.RouteModel? routeModel;
   final List<ReportModel> reports;
   final List<ReportModel> selectedReports;
-  final route_model.GeoPoint? currentLocation;
+  final GeoPoint? currentLocation;
   final Function(ReportModel)? onReportTap;
   final bool showSelectionStatus;
 
@@ -35,22 +35,63 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
   bool _isInfoWindowVisible = false;
   ReportModel? _selectedReportForInfo;
   
+  // Add a field to track the shortest route segment
+  int? _shortestRouteIndex;
+
   @override
   void initState() {
     super.initState();
     _mapController = MapController();
+    
+    // Find the shortest route segment
+    _findShortestRoute();
   }
   
   @override
+  void didUpdateWidget(RouteMapWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // Recalculate shortest route when the routeModel changes
+    if (oldWidget.routeModel != widget.routeModel) {
+      _findShortestRoute();
+    }
+  }
+  
+  // Calculate which route is the shortest
+  void _findShortestRoute() {
+    if (widget.routeModel != null && widget.routeModel!.segments.isNotEmpty) {
+      double shortestDistance = double.infinity;
+      int shortestIndex = -1;
+      
+      for (int i = 0; i < widget.routeModel!.segments.length; i++) {
+        final segment = widget.routeModel!.segments[i];
+        if (segment.distance < shortestDistance) {
+          shortestDistance = segment.distance;
+          shortestIndex = i;
+        }
+      }
+      
+      setState(() {
+        _shortestRouteIndex = shortestIndex;
+      });
+    } else {
+      setState(() {
+        _shortestRouteIndex = null;
+      });
+    }
+  }
+
+  // Add a validation method for coordinates
+  bool _isValidCoordinate(double lat, double lng) {
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // If no current location and no reports, show placeholder
     if (widget.currentLocation == null && widget.reports.isEmpty) {
       return _buildNoLocationView();
     }
-    
-    // Calculate bounds for the map
-    final bounds = _calculateMapBounds();
-    
+
     return Stack(
       children: [
         // The map
@@ -68,6 +109,8 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
               });
             },
             onMapReady: () {
+              // Zoom to fit all points
+              final bounds = _calculateMapBounds();
               if (bounds != null) {
                 _mapController.fitCamera(
                   CameraFit.bounds(
@@ -79,49 +122,41 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
             },
           ),
           children: [
-            // Base map tiles
+            // Base map tiles - OpenStreetMap
             TileLayer(
               urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
               subdomains: const ['a', 'b', 'c'],
-              userAgentPackageName: 'com.aquascan.app',
+              userAgentPackageName: 'com.example.water_watch',
+              // Attribution is important for OpenStreetMap
             ),
             
-            // Optimized route polylines (if available)
+            // Polylines for route (if available)
             if (widget.routeModel != null)
-              _buildRoutePolylines(),
+              PolylineLayer(
+                polylines: _buildRoutePolylines(),
+              ),
             
-            // Report markers
+            // Markers for reports and current location
             MarkerLayer(
               markers: _buildAllMarkers(),
             ),
             
-            // Distance markers (if route is available)
+            // Special marker layer for distance indicators
             if (widget.routeModel != null)
-              _buildDistanceMarkers(),
-              
-            // Add attribution manually instead of using AttributionWidget
-            Positioned(
-              bottom: 2,
-              right: 2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: const Text(
-                  '© OpenStreetMap contributors',
-                  style: TextStyle(fontSize: 10, color: Colors.black54),
-                ),
+              MarkerLayer(
+                markers: _buildDistanceMarkers(),
               ),
-            ),
           ],
         ),
         
-        // Map control buttons
+        // Add the legend for routes
+        if (widget.routeModel != null && widget.routeModel!.segments.length > 1)
+          _buildLegend(),
+        
+        // Map controls
         Positioned(
-          bottom: 16,
           right: 16,
+          bottom: 16,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -130,13 +165,12 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                 heroTag: 'zoomIn',
                 mini: true,
                 backgroundColor: Colors.white,
-                foregroundColor: AppTheme.textPrimaryColor,
+                foregroundColor: Colors.black87,
                 elevation: 4,
                 onPressed: () {
-                  final newZoom = _mapController.camera.zoom + 1;
-                  _mapController.move(_mapController.camera.center, newZoom);
                   setState(() {
-                    _currentZoom = newZoom;
+                    _currentZoom += 1;
+                    _mapController.move(_mapController.camera.center, _currentZoom);
                   });
                 },
                 child: const Icon(Icons.add),
@@ -148,13 +182,12 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                 heroTag: 'zoomOut',
                 mini: true,
                 backgroundColor: Colors.white,
-                foregroundColor: AppTheme.textPrimaryColor,
+                foregroundColor: Colors.black87,
                 elevation: 4,
                 onPressed: () {
-                  final newZoom = _mapController.camera.zoom - 1;
-                  _mapController.move(_mapController.camera.center, newZoom);
                   setState(() {
-                    _currentZoom = newZoom;
+                    _currentZoom -= 1;
+                    _mapController.move(_mapController.camera.center, _currentZoom);
                   });
                 },
                 child: const Icon(Icons.remove),
@@ -166,9 +199,10 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                 heroTag: 'resetView',
                 mini: true,
                 backgroundColor: Colors.white,
-                foregroundColor: AppTheme.textPrimaryColor,
+                foregroundColor: Colors.black87,
                 elevation: 4,
                 onPressed: () {
+                  // Fit map to show all points
                   final bounds = _calculateMapBounds();
                   if (bounds != null) {
                     _mapController.fitCamera(
@@ -179,13 +213,13 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     );
                   }
                 },
-                child: const Icon(Icons.center_focus_weak),
+                child: const Icon(Icons.fit_screen),
               ),
             ],
           ),
         ),
         
-        // Info window for selected report
+        // Info window when a report marker is tapped
         if (_isInfoWindowVisible && _selectedReportForInfo != null)
           Positioned(
             left: 16,
@@ -193,40 +227,94 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
             bottom: 16,
             child: _buildReportInfoWindow(_selectedReportForInfo!),
           ),
-        
-        // Route info overlay (if route is available)
+          
+        // Route info panel when a route is shown
         if (widget.routeModel != null)
           Positioned(
             top: 16,
             left: 16,
-            right: 16,
-            child: _buildRouteInfoOverlay(),
+            right: 96, // Make room for legend
+            child: Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Water Supply Routes",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "${widget.routeModel!.points.length ~/ 2} water points",
+                          style: TextStyle(color: Colors.black54),
+                        ),
+                        Row(
+                          children: [
+                            Icon(Icons.route, size: 16, color: Theme.of(context).primaryColor),
+                            SizedBox(width: 4),
+                            Text(
+                              "Total: ${widget.routeModel!.totalDistance.toStringAsFixed(2)} km",
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    // Add info about shortest route if available
+                    if (_shortestRouteIndex != null && _shortestRouteIndex! < widget.routeModel!.segments.length)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Row(
+                          children: [
+                            Icon(Icons.verified, size: 16, color: Colors.blue),
+                            SizedBox(width: 4),
+                            Text(
+                              "Shortest route: ${widget.routeModel!.segments[_shortestRouteIndex!].distance.toStringAsFixed(2)} km",
+                              style: TextStyle(
+                                color: Colors.blue,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        
-        // Current selection counter (if applicable)
+          
+        // Selection counter
         if (widget.showSelectionStatus && widget.selectedReports.isNotEmpty)
           Positioned(
-            top: widget.routeModel != null ? 100 : 16,
+            top: widget.routeModel != null ? 120 : 16,
             right: 16,
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: AppTheme.primaryColor,
-                borderRadius: BorderRadius.circular(20),
+                color: Theme.of(context).primaryColor,
+                borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.1),
-                    blurRadius: 5,
+                    blurRadius: 4,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
               child: Text(
-                '${widget.selectedReports.length} reports selected',
-                style: const TextStyle(
+                "${widget.selectedReports.length} reports selected",
+                style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                 ),
@@ -245,113 +333,106 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
           Icon(
             Icons.location_off,
             size: 80,
-            color: Colors.grey[400],
+            color: Colors.grey.shade400,
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'Location not available',
+          SizedBox(height: 16),
+          Text(
+            "Location not available",
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Text(
-              'Please enable location services to view the map',
+              "Please enable location services to view the map",
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppTheme.textSecondaryColor,
-              ),
+              style: TextStyle(color: Colors.grey.shade600),
             ),
           ),
         ],
       ),
     );
   }
-  
+
   LatLng _calculateMapCenter() {
     if (widget.routeModel != null && widget.routeModel!.points.isNotEmpty) {
-      // Use the first point in the route
       final firstPoint = widget.routeModel!.points.first;
       return LatLng(firstPoint.location.latitude, firstPoint.location.longitude);
     } else if (widget.currentLocation != null) {
-      // Use current location
       return LatLng(widget.currentLocation!.latitude, widget.currentLocation!.longitude);
     } else if (widget.reports.isNotEmpty) {
-      // Use the first report location
       final firstReport = widget.reports.first;
       return LatLng(firstReport.location.latitude, firstReport.location.longitude);
     } else {
-      // Default to a location (could be customized)
-      return const LatLng(2.9271, 101.6523); // Default to Cyberjaya, Malaysia
+      // Default to some location
+      return LatLng(0, 0);
     }
   }
   
   LatLngBounds? _calculateMapBounds() {
-    if (widget.reports.isEmpty && widget.currentLocation == null) {
-      return null;
-    }
+    final points = <LatLng>[];
     
-    List<LatLng> allPoints = [];
-    
-    // Add current location if available
-    if (widget.currentLocation != null) {
-      allPoints.add(LatLng(
-        widget.currentLocation!.latitude,
-        widget.currentLocation!.longitude,
-      ));
+    // Add current location
+    if (widget.currentLocation != null && 
+        _isValidCoordinate(widget.currentLocation!.latitude, widget.currentLocation!.longitude)) {
+      points.add(LatLng(widget.currentLocation!.latitude, widget.currentLocation!.longitude));
     }
     
     // Add report locations
     for (final report in widget.reports) {
-      allPoints.add(LatLng(
-        report.location.latitude,
-        report.location.longitude,
-      ));
+      if (_isValidCoordinate(report.location.latitude, report.location.longitude)) {
+        points.add(LatLng(report.location.latitude, report.location.longitude));
+      }
     }
     
-    // If we have route points, use those instead
+    // If there's a route model, use its points and polylines
     if (widget.routeModel != null) {
-      allPoints = [];
-      
       for (final point in widget.routeModel!.points) {
-        allPoints.add(LatLng(
-          point.location.latitude,
-          point.location.longitude,
-        ));
+        if (_isValidCoordinate(point.location.latitude, point.location.longitude)) {
+          points.add(LatLng(point.location.latitude, point.location.longitude));
+        }
       }
       
-      // Add all polyline points too
       for (final segment in widget.routeModel!.segments) {
         for (final point in segment.polyline) {
-          allPoints.add(LatLng(
-            point.latitude,
-            point.longitude,
-          ));
+          if (_isValidCoordinate(point.latitude, point.longitude)) {
+            points.add(LatLng(point.latitude, point.longitude));
+          }
         }
       }
     }
     
-    if (allPoints.isEmpty) {
+    if (points.isEmpty) {
       return null;
     }
     
-    // Find min/max coordinates
+    // If we only have one point, create a small bounding box around it
+    if (points.length == 1) {
+      final point = points.first;
+      const delta = 0.01; // About 1km
+      return LatLngBounds(
+        LatLng(point.latitude - delta, point.longitude - delta),
+        LatLng(point.latitude + delta, point.longitude + delta),
+      );
+    }
+    
+    // Find the bounds
     double minLat = double.infinity;
     double maxLat = -double.infinity;
     double minLng = double.infinity;
     double maxLng = -double.infinity;
     
-    for (final point in allPoints) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
+    for (final point in points) {
+      minLat = min(minLat, point.latitude);
+      maxLat = max(maxLat, point.latitude);
+      minLng = min(minLng, point.longitude);
+      maxLng = max(maxLng, point.longitude);
     }
     
-    // Add padding
+    // Add some padding
     final latPadding = (maxLat - minLat) * 0.1;
     final lngPadding = (maxLng - minLng) * 0.1;
     
@@ -361,304 +442,314 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
     );
   }
   
-  PolylineLayer _buildRoutePolylines() {
-    final List<Polyline> polylines = [];
+  // Update the method to build polylines with different colors
+  List<Polyline> _buildRoutePolylines() {
+    final polylines = <Polyline>[];
     
     if (widget.routeModel != null) {
-      for (final segment in widget.routeModel!.segments) {
-        final List<LatLng> points = [];
+      for (int i = 0; i < widget.routeModel!.segments.length; i++) {
+        final segment = widget.routeModel!.segments[i];
         
+        // Skip segments with no polyline
+        if (segment.polyline.isEmpty) continue;
+        
+        // Skip segments with invalid coordinates
+        bool hasInvalidCoords = false;
         for (final point in segment.polyline) {
-          points.add(LatLng(
-            point.latitude,
-            point.longitude,
-          ));
+          if (!_isValidCoordinate(point.latitude, point.longitude)) {
+            hasInvalidCoords = true;
+            break;
+          }
         }
+        if (hasInvalidCoords) continue;
         
-        polylines.add(
-          Polyline(
-            points: points,
-            strokeWidth: 4.0,
-            color: AppTheme.primaryColor,
-          ),
-        );
+        // Determine if this is the shortest route
+        final isShortestRoute = i == _shortestRouteIndex;
+        
+        // Choose color based on whether this is the shortest route
+        final Color routeColor = isShortestRoute 
+            ? Colors.blue 
+            : Colors.red;
+        
+        // Create polyline with the appropriate color
+        if (segment.distance == 0 && segment.polyline.length > 1 && 
+            segment.polyline.first.latitude == segment.polyline.last.latitude && 
+            segment.polyline.first.longitude == segment.polyline.last.longitude) {
+          
+          // Create a small circular path around the point
+          final List<LatLng> circlePoints = [];
+          final centerLat = segment.polyline.first.latitude;
+          final centerLng = segment.polyline.first.longitude;
+          const radius = 0.0005; // Small radius ~50m
+          
+          for (int j = 0; j < 20; j++) {
+            final angle = j * (2 * pi / 20);
+            final lat = centerLat + radius * cos(angle);
+            final lng = centerLng + radius * sin(angle);
+            circlePoints.add(LatLng(lat, lng));
+          }
+          // Close the circle
+          circlePoints.add(circlePoints.first);
+          
+          polylines.add(
+            Polyline(
+              points: circlePoints,
+              color: routeColor,
+              strokeWidth: 4.0,
+            ),
+          );
+        } else {
+          // Regular polyline
+          final List<LatLng> points = segment.polyline
+              .map((point) => LatLng(point.latitude, point.longitude))
+              .toList();
+          
+          polylines.add(
+            Polyline(
+              points: points,
+              color: routeColor,
+              strokeWidth: isShortestRoute ? 5.0 : 3.0, // Make shortest route slightly thicker
+            ),
+          );
+        }
       }
     }
     
-    return PolylineLayer(
-      polylines: polylines,
-    );
+    return polylines;
   }
   
   List<Marker> _buildAllMarkers() {
-    final List<Marker> markers = [];
+    final markers = <Marker>[];
     
-    // Current location marker
-    if (widget.currentLocation != null) {
-      markers.add(_buildCurrentLocationMarker());
+    // Add current location marker
+    if (widget.currentLocation != null && 
+        _isValidCoordinate(widget.currentLocation!.latitude, widget.currentLocation!.longitude)) {
+      markers.add(
+        Marker(
+          point: LatLng(widget.currentLocation!.latitude, widget.currentLocation!.longitude),
+          width: 60,
+          height: 60,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(Icons.my_location, color: Colors.white, size: 20),
+              ),
+              if (widget.routeModel != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    "Start",
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
     }
     
-    // Report markers
-    if (widget.routeModel == null) {
-      // Regular markers for reports
-      for (final report in widget.reports) {
-        markers.add(_buildReportMarker(report));
-      }
-    } else {
-      // Numbered markers for route points
+    // Add route model points with different colors
+    if (widget.routeModel != null) {
       for (int i = 0; i < widget.routeModel!.points.length; i++) {
         final point = widget.routeModel!.points[i];
         
-        // Skip current location (already added)
-        if (i == 0 && point.nodeId == 'start') {
+        // Skip invalid coordinates
+        if (!_isValidCoordinate(point.location.latitude, point.location.longitude)) {
           continue;
         }
         
-        markers.add(_buildRoutePointMarker(point, i));
+        // Skip if it's the start point (already added as current location)
+        if (i == 0 && point.nodeId == "start") continue;
+        
+        // Determine if this point is part of the shortest route
+        // We need to check both from and to points in segments
+        bool isPartOfShortestRoute = false;
+        if (_shortestRouteIndex != null && _shortestRouteIndex! < widget.routeModel!.segments.length) {
+          final shortestSegment = widget.routeModel!.segments[_shortestRouteIndex!];
+          if ((point.nodeId == shortestSegment.from.nodeId) || 
+              (point.nodeId == shortestSegment.to.nodeId)) {
+            isPartOfShortestRoute = true;
+          }
+        }
+        
+        // Choose color based on whether this is part of the shortest route
+        final Color markerColor = isPartOfShortestRoute ? Colors.blue : Colors.red;
+        
+        // Is it a report point or water supply point?
+        final bool isReportPoint = i % 2 == 0; // Assuming reports are at even indices
+        final IconData markerIcon = isReportPoint ? Icons.location_on : Icons.water_drop;
+        final String labelText = isReportPoint ? "Report" : "Water Supply";
+        
+        markers.add(
+          Marker(
+            point: LatLng(point.location.latitude, point.location.longitude),
+            width: 60,
+            height: 60,
+            child: Column(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: markerColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Icon(
+                      markerIcon,
+                      color: Colors.white, 
+                      size: 16,
+                    ),
+                  ),
+                ),
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    isPartOfShortestRoute ? "$labelText (Shortest)" : labelText,
+                    style: TextStyle(
+                      fontSize: 10, 
+                      fontWeight: FontWeight.bold,
+                      color: markerColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } else {
+      // Show regular report markers when not showing optimized routes
+      for (final report in widget.reports) {
+        // Skip invalid coordinates
+        if (!_isValidCoordinate(report.location.latitude, report.location.longitude)) {
+          continue;
+        }
+        
+        final isSelected = widget.selectedReports.any((r) => r.id == report.id);
+        markers.add(
+          Marker(
+            point: LatLng(report.location.latitude, report.location.longitude),
+            width: 40,
+            height: 40,
+            child: GestureDetector(
+              onTap: () {
+                if (widget.onReportTap != null) {
+                  widget.onReportTap!(report);
+                } else {
+                  setState(() {
+                    _selectedReportForInfo = report;
+                    _isInfoWindowVisible = true;
+                  });
+                }
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isSelected ? Theme.of(context).primaryColor : Colors.grey.shade700,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.water_drop,
+                  color: Colors.white,
+                  size: isSelected ? 20 : 16,
+                ),
+              ),
+            ),
+          ),
+        );
       }
     }
     
     return markers;
   }
   
-  Marker _buildCurrentLocationMarker() {
-    return Marker(
-      point: LatLng(
-        widget.currentLocation!.latitude,
-        widget.currentLocation!.longitude,
-      ),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white,
-                width: 2,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 5,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            width: 28,
-            height: 28,
-            child: const Icon(
-              Icons.my_location,
-              color: Colors.white,
-              size: 16,
-            ),
-          ),
-          // Label
-          if (widget.routeModel != null)
-            Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: const Text(
-                'Start',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-  
-  Marker _buildReportMarker(ReportModel report) {
-    final isSelected = widget.selectedReports.any((r) => r.id == report.id);
-    
-    return Marker(
-      point: LatLng(
-        report.location.latitude,
-        report.location.longitude,
-      ),
-      alignment: Alignment.center,
-      child: GestureDetector(
-        onTap: () {
-          if (widget.onReportTap != null) {
-            widget.onReportTap!(report);
-          } else {
-            setState(() {
-              _isInfoWindowVisible = true;
-              _selectedReportForInfo = report;
-            });
-          }
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            color: isSelected ? AppTheme.primaryColor : Colors.grey[700],
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: Colors.white,
-              width: 2,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          width: 24,
-          height: 24,
-          child: Icon(
-            Icons.water_drop,
-            color: Colors.white,
-            size: isSelected ? 14 : 12,
-          ),
-        ),
-      ),
-    );
-  }
-  
-  Marker _buildRoutePointMarker(route_model.RoutePoint point, int index) {
-    // Find the report that corresponds to this point
-    final reportId = point.nodeId;
-    ReportModel? correspondingReport;
-    
-    for (final report in widget.reports) {
-      if (report.id == reportId) {
-        correspondingReport = report;
-        break;
-      }
-    }
-    
-    // Is last point?
-    final isLastPoint = index == widget.routeModel!.points.length - 1;
-    
-    return Marker(
-      point: LatLng(
-        point.location.latitude,
-        point.location.longitude,
-      ),
-      alignment: Alignment.center,
-      child: GestureDetector(
-        onTap: () {
-          if (correspondingReport != null && widget.onReportTap != null) {
-            widget.onReportTap!(correspondingReport);
-          } else if (correspondingReport != null) {
-            setState(() {
-              _isInfoWindowVisible = true;
-              _selectedReportForInfo = correspondingReport;
-            });
-          }
-        },
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: isLastPoint ? AppTheme.successColor : AppTheme.primaryColor,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white,
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
-                    blurRadius: 5,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              width: 28,
-              height: 28,
-              child: Center(
-                child: isLastPoint
-                    ? const Icon(
-                        Icons.flag,
-                        color: Colors.white,
-                        size: 16,
-                      )
-                    : Text(
-                        index.toString(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-              ),
-            ),
-            // Label
-            Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Text(
-                isLastPoint ? 'End' : 'Stop ${index}',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  MarkerLayer _buildDistanceMarkers() {
-    final List<Marker> markers = [];
+  // Update the distance markers to match the polyline colors
+  List<Marker> _buildDistanceMarkers() {
+    final markers = <Marker>[];
     
     if (widget.routeModel != null) {
-      for (final segment in widget.routeModel!.segments) {
-        // Calculate midpoint for the distance marker
+      for (int i = 0; i < widget.routeModel!.segments.length; i++) {
+        final segment = widget.routeModel!.segments[i];
+        
+        // Skip showing distance for zero-length segments
+        if (segment.distance == 0) continue;
+        
+        // Find midpoint for the distance marker
         if (segment.polyline.length >= 2) {
           final midIndex = segment.polyline.length ~/ 2;
           final midPoint = segment.polyline[midIndex];
           
+          // Skip invalid coordinates
+          if (!_isValidCoordinate(midPoint.latitude, midPoint.longitude)) {
+            continue;
+          }
+          
+          // Determine if this is the shortest route
+          final isShortestRoute = i == _shortestRouteIndex;
+          
+          // Choose color based on whether this is the shortest route
+          final Color routeColor = isShortestRoute 
+              ? Colors.blue 
+              : Colors.red;
+          
           markers.add(
             Marker(
-              point: LatLng(
-                midPoint.latitude,
-                midPoint.longitude,
-              ),
-              alignment: Alignment.center,
+              point: LatLng(midPoint.latitude, midPoint.longitude),
+              width: 80,
+              height: 30,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
@@ -666,17 +757,30 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     BoxShadow(
                       color: Colors.black.withOpacity(0.2),
                       blurRadius: 3,
-                      offset: const Offset(0, 1),
                     ),
                   ],
                 ),
-                child: Text(
-                  '${segment.distance.toStringAsFixed(1)} km',
-                  style: TextStyle(
-                    color: AppTheme.primaryColor,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isShortestRoute ? Icons.verified : Icons.directions,
+                      size: 12,
+                      color: routeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        "${segment.distance.toStringAsFixed(1)} km",
+                        style: TextStyle(
+                          color: routeColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -685,58 +789,75 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
       }
     }
     
-    return MarkerLayer(markers: markers);
+    return markers;
   }
   
   Widget _buildReportInfoWindow(ReportModel report) {
     return Card(
       elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Close button
-            Align(
-              alignment: Alignment.topRight,
-              child: GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _isInfoWindowVisible = false;
-                    _selectedReportForInfo = null;
-                  });
-                },
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    shape: BoxShape.circle,
-                  ),
-                  padding: const EdgeInsets.all(4),
-                  child: const Icon(
-                    Icons.close,
-                    size: 16,
-                    color: Colors.black54,
-                  ),
-                ),
-              ),
-            ),
-            
-            // Title and water quality indicator
             Row(
               children: [
                 Expanded(
                   child: Text(
                     report.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isInfoWindowVisible = false;
+                      _selectedReportForInfo = null;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.close, size: 16, color: Colors.grey.shade700),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Text(
+              report.description,
+              style: TextStyle(color: Colors.grey.shade700),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
+                SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    report.address,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Row(
+              children: [
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -756,15 +877,18 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                       Icon(
                         Icons.water_drop,
                         color: _getWaterQualityColor(report.waterQuality),
-                        size: 14,
+                        size: 16,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        _getWaterQualityText(report.waterQuality),
-                        style: TextStyle(
-                          color: _getWaterQualityColor(report.waterQuality),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                      Flexible(
+                        child: Text(
+                          _getWaterQualityText(report.waterQuality),
+                          style: TextStyle(
+                            color: _getWaterQualityColor(report.waterQuality),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -772,48 +896,7 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                 ),
               ],
             ),
-            
-            const SizedBox(height: 8),
-            
-            // Description
-            Text(
-              report.description,
-              style: TextStyle(
-                color: AppTheme.textSecondaryColor,
-                fontSize: 14,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            
-            const SizedBox(height: 12),
-            
-            // Address
-            Row(
-              children: [
-                Icon(
-                  Icons.location_on,
-                  size: 16,
-                  color: AppTheme.textSecondaryColor,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    report.address,
-                    style: TextStyle(
-                      color: AppTheme.textSecondaryColor,
-                      fontSize: 12,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 12),
-            
-            // Action buttons
+            SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -825,20 +908,23 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                         widget.onReportTap!(report);
                         setState(() {
                           _isInfoWindowVisible = false;
-                          _selectedReportForInfo = null;
-                        });
-                      }
-                    },
-                    child: Text(
-                      widget.selectedReports.any((r) => r.id == report.id)
-                          ? 'Deselect'
-                          : 'Select',
-                    ),
+                        _selectedReportForInfo = null;
+                      });
+                    }
+                  },
+                  child: Text(
+                    widget.selectedReports.any((r) => r.id == report.id)
+                        ? "Deselect"
+                        : "Select",
                   ),
+                ),
                 
-                // Details button
+                SizedBox(width: 8),
+                
+                // View Details button
                 ElevatedButton(
                   onPressed: () {
+                    // Show details dialog
                     setState(() {
                       _isInfoWindowVisible = false;
                       _selectedReportForInfo = null;
@@ -846,59 +932,14 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     _showReportDetailsDialog(report);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
+                    backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
                   ),
-                  child: const Text('View Details'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildRouteInfoOverlay() {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Optimized Route',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${widget.routeModel!.points.length} stops',
-                  style: TextStyle(
-                    color: AppTheme.textSecondaryColor,
-                    fontSize: 14,
-                  ),
-                ),
-                Text(
-                  'Total: ${widget.routeModel!.totalDistance.toStringAsFixed(2)} km',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
+                  child: Text("View Details"),
                 ),
               ],
             ),
@@ -1008,16 +1049,34 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
               
               const SizedBox(height: 16),
               
-              // Reported by
+              // Address
               const Text(
-                'Reported by',
+                'Location',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.grey,
                 ),
               ),
               const SizedBox(height: 4),
-              Text(report.userName),
+              Text(report.address),
+              
+              const SizedBox(height: 16),
+              
+              // Coordinates
+              const Text(
+                'Coordinates',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${report.location.latitude.toStringAsFixed(6)}, ${report.location.longitude.toStringAsFixed(6)}',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                ),
+              ),
               
               const SizedBox(height: 16),
               
@@ -1103,9 +1162,60 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
         return 'Unknown';
     }
   }
+  
+  // Add a legend to the map to explain the colors
+  Widget _buildLegend() {
+    return Positioned(
+      top: 16,
+      right: 16,
+      child: Card(
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Route Legend",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 12,
+                    height: 4,
+                    color: Colors.blue,
+                  ),
+                  const SizedBox(width: 4),
+                  const Text("Shortest Route", style: TextStyle(fontSize: 10)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 12,
+                    height: 4,
+                    color: Colors.red,
+                  ),
+                  const SizedBox(width: 4),
+                  const Text("Other Routes", style: TextStyle(fontSize: 10)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-// A simplified map widget for showing a single location (e.g., a report location)
+// Add a simpler map widget for showing single locations
 class SimpleLocationMapWidget extends StatelessWidget {
   final double latitude;
   final double longitude;
@@ -1143,7 +1253,7 @@ class SimpleLocationMapWidget extends StatelessWidget {
               TileLayer(
                 urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                 subdomains: const ['a', 'b', 'c'],
-                userAgentPackageName: 'com.aquascan.app',
+                userAgentPackageName: 'com.example.water_watch',
               ),
               
               // Location marker
@@ -1159,23 +1269,6 @@ class SimpleLocationMapWidget extends StatelessWidget {
                     ),
                   ),
                 ],
-              ),
-              
-              // Add attribution manually
-              Positioned(
-                bottom: 2,
-                right: 2,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: const Text(
-                    '© OpenStreetMap contributors',
-                    style: TextStyle(fontSize: 10, color: Colors.black54),
-                  ),
-                ),
               ),
             ],
           ),
@@ -1201,251 +1294,7 @@ class SimpleLocationMapWidget extends StatelessWidget {
               ),
             ),
           ),
-        
-        // Zoom control buttons
-        Positioned(
-          top: 8,
-          right: 8,
-          child: Column(
-            children: [
-              FloatingActionButton(
-                heroTag: 'simpleZoomIn',
-                mini: true,
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-                onPressed: () {},
-                child: const Icon(Icons.add),
-              ),
-              const SizedBox(height: 4),
-              FloatingActionButton(
-                heroTag: 'simpleZoomOut',
-                mini: true,
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-                onPressed: () {},
-                child: const Icon(Icons.remove),
-              ),
-            ],
-          ),
-        ),
       ],
-    );
-  }
-}
-// Widget for showing a specific route on a map
-class RoutePreviewMapWidget extends StatefulWidget {
-  final route_model.RouteModel routeModel;
-  final double height;
-  
-  const RoutePreviewMapWidget({
-    Key? key,
-    required this.routeModel,
-    this.height = 300,
-  }) : super(key: key);
-
-  @override
-  State<RoutePreviewMapWidget> createState() => _RoutePreviewMapWidgetState();
-}
-
-class _RoutePreviewMapWidgetState extends State<RoutePreviewMapWidget> {
-  final MapController _mapController = MapController();
-  
-  @override
-  Widget build(BuildContext context) {
-    // Extract all points for bounds calculation
-    final List<LatLng> allPoints = [];
-    
-    // Add route points
-    for (final point in widget.routeModel.points) {
-      allPoints.add(LatLng(
-        point.location.latitude,
-        point.location.longitude,
-      ));
-    }
-    
-    // Add polyline points
-    for (final segment in widget.routeModel.segments) {
-      for (final point in segment.polyline) {
-        allPoints.add(LatLng(
-          point.latitude,
-          point.longitude,
-        ));
-      }
-    }
-    
-    // Calculate bounds
-    double minLat = double.infinity;
-    double maxLat = -double.infinity;
-    double minLng = double.infinity;
-    double maxLng = -double.infinity;
-    
-    for (final point in allPoints) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
-    }
-    
-    // Add some padding
-    final latPadding = (maxLat - minLat) * 0.1;
-    final lngPadding = (maxLng - minLng) * 0.1;
-    
-    final bounds = LatLngBounds(
-      LatLng(minLat - latPadding, minLng - lngPadding),
-      LatLng(maxLat + latPadding, maxLng + lngPadding),
-    );
-    
-    return SizedBox(
-      height: widget.height,
-      child: FlutterMap(
-        mapController: _mapController,
-        options: MapOptions(
-          initialCenter: LatLng(
-            (minLat + maxLat) / 2,
-            (minLng + maxLng) / 2,
-          ),
-          initialZoom: 10,
-          onMapReady: () {
-            // Using a post-frame callback to ensure the map is fully rendered
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _mapController.fitCamera(
-                CameraFit.bounds(
-                  bounds: bounds,
-                  padding: const EdgeInsets.all(20),
-                ),
-              );
-            });
-          },
-        ),
-        children: [
-          // Base map tiles
-          TileLayer(
-            urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            subdomains: const ['a', 'b', 'c'],
-            userAgentPackageName: 'com.aquascan.app',
-          ),
-          
-          // Route polylines
-          PolylineLayer(
-            polylines: _buildRoutePolylines(),
-          ),
-          
-          // Markers for route points
-          MarkerLayer(
-            markers: _buildMarkers(),
-          ),
-          
-          // Attribution layer
-          const AttributionLayer(),
-        ],
-      ),
-    );
-  }
-  
-  List<Polyline> _buildRoutePolylines() {
-    final List<Polyline> polylines = [];
-    
-    for (final segment in widget.routeModel.segments) {
-      final List<LatLng> points = [];
-      
-      for (final point in segment.polyline) {
-        points.add(LatLng(
-          point.latitude,
-          point.longitude,
-        ));
-      }
-      
-      polylines.add(
-        Polyline(
-          points: points,
-          strokeWidth: 4.0,
-          color: AppTheme.primaryColor,
-        ),
-      );
-    }
-    
-    return polylines;
-  }
-  
-  List<Marker> _buildMarkers() {
-    final List<Marker> markers = [];
-    
-    for (int i = 0; i < widget.routeModel.points.length; i++) {
-      final point = widget.routeModel.points[i];
-      
-      markers.add(
-        Marker(
-          point: LatLng(
-            point.location.latitude,
-            point.location.longitude,
-          ),
-          alignment: Alignment.center,
-          child: Container(
-            decoration: BoxDecoration(
-              color: i == 0 
-                  ? Colors.blue
-                  : i == widget.routeModel.points.length - 1
-                      ? AppTheme.successColor
-                      : AppTheme.primaryColor,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white,
-                width: 2,
-              ),
-            ),
-            width: 24,
-            height: 24,
-            child: Center(
-              child: i == 0
-                  ? const Icon(
-                      Icons.my_location,
-                      color: Colors.white,
-                      size: 14,
-                    )
-                  : i == widget.routeModel.points.length - 1
-                      ? const Icon(
-                          Icons.flag,
-                          color: Colors.white,
-                          size: 14,
-                        )
-                      : Text(
-                          i.toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-            ),
-          ),
-        ),
-      );
-    }
-    
-    return markers;
-  }
-}
-
-// Simple attribution layer
-class AttributionLayer extends StatelessWidget {
-  const AttributionLayer({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      bottom: 2,
-      right: 2,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.7),
-          borderRadius: BorderRadius.circular(3),
-        ),
-        child: const Text(
-          '© OpenStreetMap contributors',
-          style: TextStyle(fontSize: 10, color: Colors.black54),
-        ),
-      ),
     );
   }
 }

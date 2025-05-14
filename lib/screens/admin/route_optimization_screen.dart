@@ -1,18 +1,17 @@
 // lib/screens/admin/route_optimization_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
-import 'package:water_watch/models/route_model.dart';
-import 'package:water_watch/widgets/common/custom_bottom.dart';
+import 'dart:math';
 import '../../config/theme.dart';
 import '../../models/report_model.dart';
+import '../../models/route_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/database_service.dart';
 import '../../services/location_service.dart';
 import '../../services/api_service.dart';
 import '../../widgets/common/custom_loader.dart';
-import '../../widgets/admin/map_widget.dart';
+import '../../widgets/common/custom_bottom.dart';
+import '../../widgets/admin/map_widget.dart';  // Import the map widget
 
 class RouteOptimizationScreen extends StatefulWidget {
   const RouteOptimizationScreen({Key? key}) : super(key: key);
@@ -38,8 +37,6 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
   late LocationService _locationService;
   late ApiService _apiService;
   
-  final MapController _mapController = MapController();
-  
   @override
   void initState() {
     super.initState();
@@ -63,7 +60,7 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
       ),
     );
     
-    // Start loading data after widget is built
+    // Load initial data
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialData();
     });
@@ -119,7 +116,7 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
     if (_selectedReports.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select at least one report'),
+          content: Text('Please select at least one water point'),
         ),
       );
       return;
@@ -140,11 +137,26 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
     });
     
     try {
-      final optimizedRoute = await _apiService.getOptimizedRoute(
+      // Call API to optimize route
+      final routeData = await _apiService.getOptimizedRoute(
         _selectedReports,
         _currentLocation!,
         _authService.currentUser!.uid,
       );
+      
+      // Process API response and convert to RouteModel
+      final processedData = _convertTimestamps(routeData as Map<String, dynamic>);
+      
+      // Create RouteModel with proper error handling
+      RouteModel optimizedRoute;
+      try {
+        optimizedRoute = RouteModel.fromJson(processedData);
+      } catch (e) {
+        print('Error creating RouteModel: $e');
+        
+        // Manually construct RouteModel
+        optimizedRoute = _manuallyCreateRouteModel(processedData);
+      }
       
       setState(() {
         _optimizedRoute = optimizedRoute;
@@ -153,28 +165,212 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
       });
       
       // Save route to database
-      await _databaseService.createRoute(optimizedRoute);
+      await _databaseService.createRoute(routeData as Map<String, dynamic>);
       
       // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Route optimized successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Route optimized successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (e) {
       setState(() {
         _errorMessage = 'Error optimizing route: $e';
         _isOptimizing = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $_errorMessage'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $_errorMessage'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
+  }
+  
+  // Helper to convert timestamps in the route data
+  Map<String, dynamic> _convertTimestamps(Map<String, dynamic> data) {
+    var result = Map<String, dynamic>.from(data);
+    
+    // Convert timestamp strings to DateTime
+    if (result.containsKey('createdAt')) {
+      try {
+        if (result['createdAt'] is String) {
+          result['createdAt'] = DateTime.parse(result['createdAt']);
+        } else if (result['createdAt'] is int) {
+          result['createdAt'] = DateTime.fromMillisecondsSinceEpoch(result['createdAt']);
+        }
+      } catch (e) {
+        print('Error converting createdAt: $e');
+        result['createdAt'] = DateTime.now();
+      }
+    } else {
+      result['createdAt'] = DateTime.now();
+    }
+    
+    if (result.containsKey('updatedAt')) {
+      try {
+        if (result['updatedAt'] is String) {
+          result['updatedAt'] = DateTime.parse(result['updatedAt']);
+        } else if (result['updatedAt'] is int) {
+          result['updatedAt'] = DateTime.fromMillisecondsSinceEpoch(result['updatedAt']);
+        }
+      } catch (e) {
+        print('Error converting updatedAt: $e');
+        result['updatedAt'] = DateTime.now();
+      }
+    } else {
+      result['updatedAt'] = DateTime.now();
+    }
+    
+    return result;
+  }
+  
+  // Manually create a RouteModel when fromJson fails
+  RouteModel _manuallyCreateRouteModel(Map<String, dynamic> data) {
+    List<String> reportIds = [];
+    if (data.containsKey('reportIds') && data['reportIds'] is List) {
+      reportIds = List<String>.from((data['reportIds'] as List).map((e) => e.toString()));
+    }
+    
+    List<RoutePoint> points = [];
+    if (data.containsKey('points') && data['points'] is List) {
+      points = (data['points'] as List).map((point) {
+        if (point is Map<String, dynamic>) {
+          return RoutePoint(
+            nodeId: point['nodeId']?.toString() ?? '',
+            location: GeoPoint(
+              latitude: _getDoubleValue(point['location']?['latitude'], 0),
+              longitude: _getDoubleValue(point['location']?['longitude'], 0),
+            ),
+            address: point['address']?.toString() ?? '',
+            label: point['label']?.toString(),
+          );
+        }
+        return RoutePoint(
+          nodeId: '',
+          location: GeoPoint(latitude: 0, longitude: 0),
+          address: '',
+        );
+      }).toList();
+    }
+    
+    List<RouteSegment> segments = [];
+    if (data.containsKey('segments') && data['segments'] is List) {
+      segments = (data['segments'] as List).map((segment) {
+        if (segment is Map<String, dynamic>) {
+          // Process 'from' point
+          RoutePoint fromPoint;
+          if (segment['from'] is Map<String, dynamic>) {
+            var from = segment['from'] as Map<String, dynamic>;
+            fromPoint = RoutePoint(
+              nodeId: from['nodeId']?.toString() ?? '',
+              location: GeoPoint(
+                latitude: _getDoubleValue(from['location']?['latitude'], 0),
+                longitude: _getDoubleValue(from['location']?['longitude'], 0),
+              ),
+              address: from['address']?.toString() ?? '',
+              label: from['label']?.toString(),
+            );
+          } else {
+            fromPoint = RoutePoint(
+              nodeId: '',
+              location: GeoPoint(latitude: 0, longitude: 0),
+              address: '',
+            );
+          }
+          
+          // Process 'to' point
+          RoutePoint toPoint;
+          if (segment['to'] is Map<String, dynamic>) {
+            var to = segment['to'] as Map<String, dynamic>;
+            toPoint = RoutePoint(
+              nodeId: to['nodeId']?.toString() ?? '',
+              location: GeoPoint(
+                latitude: _getDoubleValue(to['location']?['latitude'], 0),
+                longitude: _getDoubleValue(to['location']?['longitude'], 0),
+              ),
+              address: to['address']?.toString() ?? '',
+              label: to['label']?.toString(),
+            );
+          } else {
+            toPoint = RoutePoint(
+              nodeId: '',
+              location: GeoPoint(latitude: 0, longitude: 0),
+              address: '',
+            );
+          }
+          
+          // Process polyline
+          List<GeoPoint> polyline = [];
+          if (segment['polyline'] is List) {
+            polyline = (segment['polyline'] as List).map((point) {
+              if (point is Map<String, dynamic>) {
+                return GeoPoint(
+                  latitude: _getDoubleValue(point['latitude'], 0),
+                  longitude: _getDoubleValue(point['longitude'], 0),
+                );
+              }
+              return GeoPoint(latitude: 0, longitude: 0);
+            }).toList();
+          }
+          
+          return RouteSegment(
+            from: fromPoint,
+            to: toPoint,
+            distance: _getDoubleValue(segment['distance'], 0),
+            polyline: polyline,
+          );
+        }
+        
+        // Default segment if parsing fails
+        return RouteSegment(
+          from: RoutePoint(
+            nodeId: '',
+            location: GeoPoint(latitude: 0, longitude: 0),
+            address: '',
+          ),
+          to: RoutePoint(
+            nodeId: '',
+            location: GeoPoint(latitude: 0, longitude: 0),
+            address: '',
+          ),
+          distance: 0,
+          polyline: [],
+        );
+      }).toList();
+    }
+    
+    return RouteModel(
+      id: data['id']?.toString() ?? 'route-${DateTime.now().millisecondsSinceEpoch}',
+      adminId: data['adminId']?.toString() ?? '',
+      reportIds: reportIds,
+      points: points,
+      segments: segments,
+      totalDistance: _getDoubleValue(data['totalDistance'], 0),
+      createdAt: data['createdAt'] ?? DateTime.now(),
+      updatedAt: data['updatedAt'] ?? DateTime.now(),
+    );
+  }
+  
+  // Helper to safely convert to double
+  double _getDoubleValue(dynamic value, double defaultValue) {
+    if (value == null) return defaultValue;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      try {
+        return double.parse(value);
+      } catch (e) {
+        return defaultValue;
+      }
+    }
+    return defaultValue;
   }
   
   void _toggleReportSelection(ReportModel report) {
@@ -219,7 +415,7 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Route Optimization'),
+        title: const Text('Closest Water Supply Finder'),
         actions: [
           // Toggle view button
           IconButton(
@@ -297,127 +493,17 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
       opacity: _fadeAnimation,
       child: Column(
         children: [
-          // Map section
+          // Map takes most of the screen
           Expanded(
-            child: _optimizedRoute != null
-                ? _buildOptimizedRouteMap()
-                : _buildReportsMap(),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildOptimizedRouteMap() {
-    // This would be implemented using the actual map widget in a real app
-    // For this example, we'll use a placeholder
-    return Container(
-      color: Colors.grey[200],
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.map,
-              size: 80,
-              color: Colors.grey,
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Optimized Route Map',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Total Distance: ${_optimizedRoute!.totalDistance.toStringAsFixed(2)} km',
-              style: TextStyle(
-                color: AppTheme.textSecondaryColor,
-              ),
-            ),
-            const SizedBox(height: 20),
-            CustomButton(
-              text: 'View Route Details',
-              onPressed: () {
-                // Show route details dialog
-                _showRouteDetailsDialog();
-              },
-              icon: Icons.info,
-              type: CustomButtonType.outline,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildReportsMap() {
-    // This would be implemented using the actual map widget in a real app
-    // For this example, we'll use a placeholder
-    return Container(
-      color: Colors.grey[200],
-      child: Stack(
-        children: [
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.map,
-                  size: 80,
-                  color: Colors.grey,
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Reports Map View',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Select reports below to create a route',
-                  style: TextStyle(
-                    color: AppTheme.textSecondaryColor,
-                  ),
-                ),
-              ],
+            child: RouteMapWidget(
+              routeModel: _optimizedRoute,
+              reports: _allReports,
+              selectedReports: _selectedReports,
+              currentLocation: _currentLocation,
+              onReportTap: _toggleReportSelection,
+              showSelectionStatus: true,
             ),
           ),
-          
-          // Selection counter badge
-          if (_selectedReports.isNotEmpty)
-            Positioned(
-              top: 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 5,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Text(
-                  '${_selectedReports.length} reports selected',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -435,7 +521,7 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Select Reports (${_selectedReports.length}/${_allReports.length})',
+                  'Select Water Points (${_selectedReports.length}/${_allReports.length})',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -477,13 +563,13 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.check_circle,
+            Icons.water_drop,
             size: 80,
-            color: AppTheme.successColor.withOpacity(0.7),
+            color: AppTheme.primaryColor.withOpacity(0.7),
           ),
           const SizedBox(height: 16),
           const Text(
-            'No Pending Reports',
+            'No Water Points Available',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -491,10 +577,17 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
           ),
           const SizedBox(height: 8),
           Text(
-            'All reports have been resolved',
+            'Try refreshing or adding new water points',
             style: TextStyle(
               color: AppTheme.textSecondaryColor,
             ),
+          ),
+          const SizedBox(height: 24),
+          CustomButton(
+            text: 'Refresh',
+            onPressed: _loadInitialData,
+            icon: Icons.refresh,
+            type: CustomButtonType.primary,
           ),
         ],
       ),
@@ -553,7 +646,7 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      report.title,
+                      report.title.isNotEmpty ? report.title : 'Water Supply Point',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                       ),
@@ -600,17 +693,6 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
                   ],
                 ),
               ),
-              
-              // Distance (if optimized)
-              if (_optimizedRoute != null)
-                Text(
-                  _getDistanceToReport(report),
-                  style: TextStyle(
-                    color: AppTheme.textSecondaryColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
             ],
           ),
         ),
@@ -618,247 +700,41 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
     );
   }
   
-  Widget _buildBottomBar() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: _isOptimizing
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 8),
-                  Text('Optimizing route...'),
-                ],
-              ),
-            )
-          : CustomButton(
-              text: _optimizedRoute == null
-                  ? 'Optimize Route (${_selectedReports.length})'
-                  : 'Recalculate Route',
-              onPressed: _selectedReports.isEmpty ? null : _optimizeRoute,
-              icon: Icons.route,
-              isFullWidth: true,
-              type: CustomButtonType.primary,
-            ),
-    );
-  }
-  
-  void _showRouteDetailsDialog() {
-    if (_optimizedRoute == null) return;
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Route Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Total Distance: ${_optimizedRoute!.totalDistance.toStringAsFixed(2)} km',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              const Text(
-                'Route Segments:',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              
-              // List route segments
-              ..._optimizedRoute!.segments.asMap().entries.map((entry) {
-                final i = entry.key;
-                final segment = entry.value;
-                
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Card(
-                    elevation: 1,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 24,
-                                height: 24,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: AppTheme.primaryColor,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    (i + 1).toString(),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      segment.from.label ?? segment.from.address,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      segment.from.address,
-                                      style: TextStyle(
-                                        color: AppTheme.textSecondaryColor,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          
-                          // Distance indicator
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 4,
-                              horizontal: 12,
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 1,
-                                  height: 24,
-                                  color: Colors.grey[300],
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.primaryColor.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    '${segment.distance.toStringAsFixed(2)} km',
-                                    style: TextStyle(
-                                      color: AppTheme.primaryColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          
-                          // Destination
-                          Row(
-                            children: [
-                              Container(
-                                width: 24,
-                                height: 24,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: i == _optimizedRoute!.segments.length - 1
-                                      ? AppTheme.successColor
-                                      : AppTheme.primaryLightColor,
-                                ),
-                                child: Center(
-                                  child: Icon(
-                                    i == _optimizedRoute!.segments.length - 1
-                                        ? Icons.flag
-                                        : Icons.arrow_downward,
-                                    color: Colors.white,
-                                    size: 16,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      segment.to.label ?? segment.to.address,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      segment.to.address,
-                                      style: TextStyle(
-                                        color: AppTheme.textSecondaryColor,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ],
-          ),
+ Widget _buildBottomBar() {
+  return Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.1),
+          blurRadius: 10,
+          offset: const Offset(0, -5),
         ),
-        actions: [
-          // Close button
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            child: const Text('Close'),
-          ),
-          
-          // Navigate button (for a real app, this would launch a maps app)
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Navigation feature coming soon!'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.successColor,
+      ],
+    ),
+    child: _isOptimizing
+        ? const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 8),
+                Text('Finding closest water supply points...'),
+              ],
             ),
-            child: const Text('Navigate'),
+          )
+        : CustomButton(
+            text: _optimizedRoute == null
+                ? 'Find Closest Water Supply'
+                : 'Recalculate Routes',
+            onPressed: _selectedReports.isEmpty ? null : _optimizeRoute,
+            icon: Icons.water_drop,
+            isFullWidth: true,
+            type: CustomButtonType.primary,
           ),
-        ],
-      ),
-    );
-  }
+  );
+}
   
   String _getWaterQualityText(WaterQualityState quality) {
     switch (quality) {
@@ -890,11 +766,5 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> with 
       default:
         return Colors.grey;
     }
-  }
-  
-  String _getDistanceToReport(ReportModel report) {
-    // In a real app, this would calculate the distance from current location to report
-    // For this example, we'll return a placeholder value
-    return '2.3 km';
   }
 }

@@ -18,12 +18,34 @@ class GeoPoint {
     required this.longitude,
   });
 
-  factory GeoPoint.fromJson(Map<String, dynamic> json) {
-    return GeoPoint(
-      latitude: json['latitude'] as double,
-      longitude: json['longitude'] as double,
-    );
+ // In the GeoPoint class
+
+factory GeoPoint.fromJson(Map<String, dynamic> json) {
+  double lat = 0.0;
+  double lng = 0.0;
+  
+  try {
+    if (json.containsKey('latitude') && json['latitude'] != null) {
+      lat = json['latitude'] is double
+          ? json['latitude'] as double
+          : (json['latitude'] as num).toDouble();
+    }
+    
+    if (json.containsKey('longitude') && json['longitude'] != null) {
+      lng = json['longitude'] is double
+          ? json['longitude'] as double
+          : (json['longitude'] as num).toDouble();
+    }
+  } catch (e) {
+    print('Error parsing GeoPoint coordinates: $e');
+    // Use defaults
   }
+  
+  return GeoPoint(
+    latitude: lat,
+    longitude: lng,
+  );
+}
 
   Map<String, dynamic> toJson() {
     return {
@@ -172,16 +194,57 @@ class RouteSegment {
     required this.polyline,
   });
 
-  factory RouteSegment.fromJson(Map<String, dynamic> json) {
-    return RouteSegment(
-      from: RoutePoint.fromJson(json['from'] as Map<String, dynamic>),
-      to: RoutePoint.fromJson(json['to'] as Map<String, dynamic>),
-      distance: json['distance'] as double,
-      polyline: (json['polyline'] as List)
-          .map((point) => GeoPoint.fromJson(point as Map<String, dynamic>))
-          .toList(),
-    );
+ // In the RouteSegment class in route_model.dart:
+
+factory RouteSegment.fromJson(Map<String, dynamic> json) {
+  // Safely process polyline data
+  List<GeoPoint> polylinePoints = [];
+  if (json.containsKey('polyline') && json['polyline'] != null) {
+    try {
+      final polylineData = json['polyline'] as List<dynamic>;
+      polylinePoints = polylineData.map((point) {
+        if (point is Map<String, dynamic>) {
+          try {
+            return GeoPoint.fromJson(point);
+          } catch (e) {
+            print('Error creating GeoPoint from: $point');
+            return GeoPoint(latitude: 0, longitude: 0);
+          }
+        } else {
+          print('Polyline point is not a Map: $point');
+          return GeoPoint(latitude: 0, longitude: 0);
+        }
+      }).toList();
+    } catch (e) {
+      print('Error processing polyline data: $e');
+      // Provide an empty list as fallback
+      polylinePoints = [];
+    }
   }
+
+  return RouteSegment(
+    from: json.containsKey('from') && json['from'] != null
+        ? RoutePoint.fromJson(json['from'] as Map<String, dynamic>)
+        : RoutePoint(
+            nodeId: '',
+            location: GeoPoint(latitude: 0, longitude: 0),
+            address: '',
+          ),
+    to: json.containsKey('to') && json['to'] != null
+        ? RoutePoint.fromJson(json['to'] as Map<String, dynamic>)
+        : RoutePoint(
+            nodeId: '',
+            location: GeoPoint(latitude: 0, longitude: 0),
+            address: '',
+          ),
+    distance: json.containsKey('distance') && json['distance'] != null
+        ? (json['distance'] is double 
+            ? json['distance'] as double
+            : (json['distance'] as num).toDouble())
+        : 0.0,
+    polyline: polylinePoints,
+  );
+}
 
   Map<String, dynamic> toJson() {
     return {

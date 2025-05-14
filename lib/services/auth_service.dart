@@ -14,16 +14,51 @@ class AuthService {
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
   // Sign in with email and password
-  Future<UserCredential> signInWithEmailAndPassword(String email, String password) async {
-    try {
-      return await _auth.signInWithEmailAndPassword(
+Future<UserCredential> signInWithEmailAndPassword(String email, String password) async {
+  try {
+    // For development: automatically grant admin role for specific credentials
+    if (email == 'admin@gmail.com' && password == 'Admin123') {
+      final userCredential = await _auth.signInWithEmailAndPassword(
         email: email, 
         password: password,
       );
-    } catch (e) {
-      throw Exception('Failed to sign in: $e');
+      
+      // Check if the user exists in Firestore and update role if needed
+      final docRef = _firestore.collection('users').doc(userCredential.user!.uid);
+      final docSnapshot = await docRef.get();
+      
+      if (docSnapshot.exists) {
+        // Update role to admin if not already
+        if (docSnapshot.data()?['role'] != 'admin') {
+          await docRef.update({'role': 'admin'});
+        }
+      } else {
+        // Create user doc with admin role if it doesn't exist
+        final now = DateTime.now();
+        await docRef.set({
+          'uid': userCredential.user!.uid,
+          'name': 'Admin User',
+          'email': email,
+          'photoUrl': null,
+          'address': null,
+          'role': 'admin',
+          'createdAt': now,
+          'updatedAt': now,
+        });
+      }
+      
+      return userCredential;
     }
+    
+    // Regular login for other credentials
+    return await _auth.signInWithEmailAndPassword(
+      email: email, 
+      password: password,
+    );
+  } catch (e) {
+    throw Exception('Failed to sign in: $e');
   }
+}
 
   // Register with email and password
   Future<UserCredential> registerWithEmailAndPassword(

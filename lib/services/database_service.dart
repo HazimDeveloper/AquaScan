@@ -1,6 +1,7 @@
 
 // lib/services/database_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:water_watch/models/route_model.dart';
 import '../models/report_model.dart';
 
@@ -111,17 +112,49 @@ class DatabaseService {
   // ROUTES
   
   // Create a new route
-  Future<String> createRoute(RouteModel route) async {
-    try {
-      final routeRef = _firestore.collection('routes').doc();
-      final routeWithId = route.copyWith(id: routeRef.id);
-      
-      await routeRef.set(routeWithId.toJson());
-      return routeRef.id;
-    } catch (e) {
-      throw Exception('Failed to create route: $e');
+  // In database_service.dart - add this method if not already present
+// In your database_service.dart
+Future<String> createRoute(Map<String, dynamic> routeData) async {
+  try {
+    final routeRef = _firestore.collection('routes').doc();
+    final routeId = routeData['id'] ?? routeRef.id;
+    
+    // Add ID if not provided
+    if (!routeData.containsKey('id') || routeData['id'] == null) {
+      routeData['id'] = routeId;
     }
+    
+    // Convert timestamps
+    if (routeData.containsKey('createdAt') && 
+        !(routeData['createdAt'] is firestore.Timestamp)) {
+      if (routeData['createdAt'] is DateTime) {
+        routeData['createdAt'] = firestore.Timestamp.fromDate(routeData['createdAt']);
+      } else if (routeData['createdAt'] is String) {
+        routeData['createdAt'] = firestore.Timestamp.fromDate(
+          DateTime.parse(routeData['createdAt']));
+      } else {
+        routeData['createdAt'] = firestore.Timestamp.now();
+      }
+    }
+    
+    if (routeData.containsKey('updatedAt') && 
+        !(routeData['updatedAt'] is firestore.Timestamp)) {
+      if (routeData['updatedAt'] is DateTime) {
+        routeData['updatedAt'] = firestore.Timestamp.fromDate(routeData['updatedAt']);
+      } else if (routeData['updatedAt'] is String) {
+        routeData['updatedAt'] = firestore.Timestamp.fromDate(
+          DateTime.parse(routeData['updatedAt']));
+      } else {
+        routeData['updatedAt'] = firestore.Timestamp.now();
+      }
+    }
+    
+    await _firestore.collection('routes').doc(routeId).set(routeData);
+    return routeId;
+  } catch (e) {
+    throw Exception('Failed to create route: $e');
   }
+}
   
   // Get a specific route
   Future<RouteModel> getRoute(String routeId) async {
