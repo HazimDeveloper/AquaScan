@@ -1,4 +1,3 @@
-
 // lib/screens/user/report_issue_screen.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -11,6 +10,7 @@ import '../../services/database_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/location_service.dart';
 import '../../services/api_service.dart';
+import '../../utils/water_quality_utils.dart';
 import '../../widgets/common/custom_loader.dart';
 
 class ReportIssueScreen extends StatefulWidget {
@@ -26,10 +26,12 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   final _descriptionController = TextEditingController();
   final _addressController = TextEditingController();
   
-  List<File> _images = [];
+  List<XFile> _pickedImages = []; // Using XFile to store picked images
   bool _isLoading = false;
   bool _isDetecting = false;
   WaterQualityState _detectedQuality = WaterQualityState.unknown;
+  double? _confidence; // Store confidence score from API
+  String? _originalClass; // Original class from the backend for reference
   
   late AuthService _authService;
   late DatabaseService _databaseService;
@@ -95,50 +97,78 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   }
   
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
-    
-    if (pickedFile != null) {
-      setState(() {
-        _images.add(File(pickedFile.path));
-      });
-      
-      // Detect water quality
-      _detectWaterQuality(File(pickedFile.path));
-    }
-  }
-  
-  Future<void> _detectWaterQuality(File image) async {
     try {
-      setState(() {
-        _isDetecting = true;
-      });
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
       
-      final quality = await _apiService.analyzeWaterQuality(image);
-      
-      setState(() {
-        _detectedQuality = quality;
-        _isDetecting = false;
-      });
+      if (pickedFile != null) {
+        setState(() {
+          _pickedImages.add(pickedFile);
+        });
+        
+        // Detect water quality using the file path
+        final imageFile = File(pickedFile.path);
+        _detectWaterQuality(imageFile);
+      }
     } catch (e) {
-      setState(() {
-        _isDetecting = false;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error detecting water quality: $e'),
+          content: Text('Error picking image: $e'),
         ),
       );
     }
   }
   
+  Future<void> _detectWaterQuality(File image) async {
+  try {
+    setState(() {
+      _isDetecting = true;
+    });
+    
+    // Add detailed logging
+    print('Starting water quality detection for image: ${image.path}');
+    print('File exists: ${image.existsSync()}');
+    print('File size: ${await image.length()} bytes');
+    
+    // Call the API service and get both quality state and confidence
+    final result = await _apiService.analyzeWaterQualityWithConfidence(image);
+    
+    // Log the result
+    print('Detected water quality: ${result.waterQuality} with confidence: ${result.confidence}%');
+    print('Original class from backend: ${result.originalClass}');
+    
+    setState(() {
+      _detectedQuality = result.waterQuality;
+      _confidence = result.confidence;
+      _originalClass = result.originalClass;
+      _isDetecting = false;
+    });
+  } catch (e) {
+    print('Error in _detectWaterQuality: $e');
+    setState(() {
+      _isDetecting = false;
+      // Set a default quality but no confidence on error
+      _detectedQuality = WaterQualityState.unknown;
+      _confidence = null;
+      _originalClass = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error detecting water quality: $e'),
+      ),
+    );
+  }
+}
+  
   void _removeImage(int index) {
     setState(() {
-      _images.removeAt(index);
+      _pickedImages.removeAt(index);
       
       // Reset detection if all images are removed
-      if (_images.isEmpty) {
+      if (_pickedImages.isEmpty) {
         _detectedQuality = WaterQualityState.unknown;
+        _confidence = null;
+        _originalClass = null;
       }
     });
   }
@@ -164,8 +194,14 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
         
         // Upload images
         List<String> imageUrls = [];
-        if (_images.isNotEmpty) {
-          imageUrls = await _storageService.uploadImages(_images, 'reports');
+        if (_pickedImages.isNotEmpty) {
+          // Convert XFiles to File objects for uploading
+          List<File> filesToUpload = [];
+          for (var xFile in _pickedImages) {
+            filesToUpload.add(File(xFile.path));
+          }
+          
+          imageUrls = await _storageService.uploadImages(filesToUpload, 'reports');
         }
         
         // Create report
@@ -209,38 +245,6 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
           _isLoading = false;
         });
       }
-    }
-  }
-  
-  String _getWaterQualityText() {
-    switch (_detectedQuality) {
-      case WaterQualityState.clean:
-        return 'Clean';
-      case WaterQualityState.slightlyContaminated:
-        return 'Slightly Contaminated';
-      case WaterQualityState.moderatelyContaminated:
-        return 'Moderately Contaminated';
-      case WaterQualityState.heavilyContaminated:
-        return 'Heavily Contaminated';
-      case WaterQualityState.unknown:
-      default:
-        return 'Unknown';
-    }
-  }
-  
-  Color _getWaterQualityColor() {
-    switch (_detectedQuality) {
-      case WaterQualityState.clean:
-        return Colors.blue;
-      case WaterQualityState.slightlyContaminated:
-        return Colors.green;
-      case WaterQualityState.moderatelyContaminated:
-        return Colors.orange;
-      case WaterQualityState.heavilyContaminated:
-        return Colors.red;
-      case WaterQualityState.unknown:
-      default:
-        return Colors.grey;
     }
   }
   
@@ -288,7 +292,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
                           const SizedBox(height: 16),
                           
                           // Image grid
-                          if (_images.isNotEmpty)
+                          if (_pickedImages.isNotEmpty)
                             GridView.builder(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
@@ -297,7 +301,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
                                 crossAxisSpacing: 8,
                                 mainAxisSpacing: 8,
                               ),
-                              itemCount: _images.length,
+                              itemCount: _pickedImages.length,
                               itemBuilder: (context, index) {
                                 return Stack(
                                   children: [
@@ -305,7 +309,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(8),
                                         image: DecorationImage(
-                                          image: FileImage(_images[index]),
+                                          image: FileImage(File(_pickedImages[index].path)),
                                           fit: BoxFit.cover,
                                         ),
                                       ),
@@ -362,46 +366,132 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
                           else if (_detectedQuality != WaterQualityState.unknown)
                             Padding(
                               padding: const EdgeInsets.only(top: 16.0),
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: _getWaterQualityColor().withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: _getWaterQualityColor(),
-                                    width: 1,
-                                  ),
+                              child: Card(
+                                elevation: 3,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.water_drop,
-                                      color: _getWaterQualityColor(),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
                                         children: [
+                                          Icon(
+                                            WaterQualityUtils.getWaterQualityIcon(_detectedQuality),
+                                            color: WaterQualityUtils.getWaterQualityColor(_detectedQuality),
+                                            size: 24,
+                                          ),
+                                          const SizedBox(width: 8),
                                           Text(
-                                            'Detected Water Quality: ${_getWaterQualityText()}',
+                                            'Water Quality Analysis',
                                             style: TextStyle(
                                               fontWeight: FontWeight.bold,
-                                              color: _getWaterQualityColor(),
+                                              fontSize: 16,
                                             ),
                                           ),
-                                          if (_detectedQuality != WaterQualityState.unknown)
-                                            Text(
-                                              'Our AI has analyzed your image and determined this quality level',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: AppTheme.textSecondaryColor,
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Quality State:',
+                                                  style: TextStyle(
+                                                    color: Theme.of(context).textTheme.bodySmall?.color,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                                  decoration: BoxDecoration(
+                                                    color: WaterQualityUtils.getWaterQualityColor(_detectedQuality).withOpacity(0.2),
+                                                    borderRadius: BorderRadius.circular(16),
+                                                  ),
+                                                  child: Text(
+                                                    WaterQualityUtils.getWaterQualityText(_detectedQuality),
+                                                    style: TextStyle(
+                                                      color: WaterQualityUtils.getWaterQualityColor(_detectedQuality),
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (_originalClass != null) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    'Class: $_originalClass',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.grey,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                          // Only show confidence if it's available
+                                          if (_confidence != null)
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    'Confidence:',
+                                                    style: TextStyle(
+                                                      color: Theme.of(context).textTheme.bodySmall?.color,
+                                                      fontWeight: FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      ClipRRect(
+                                                        borderRadius: BorderRadius.circular(8),
+                                                        child: LinearProgressIndicator(
+                                                          value: _confidence! / 100,
+                                                          minHeight: 10,
+                                                          backgroundColor: Colors.grey.shade200,
+                                                          valueColor: AlwaysStoppedAnimation<Color>(
+                                                            WaterQualityUtils.getWaterQualityColor(_detectedQuality),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Align(
+                                                        alignment: Alignment.centerRight,
+                                                        child: Text(
+                                                          '${_confidence!.toStringAsFixed(1)}%',
+                                                          style: TextStyle(
+                                                            color: WaterQualityUtils.getWaterQualityColor(_detectedQuality),
+                                                            fontWeight: FontWeight.bold,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                         ],
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        WaterQualityUtils.getWaterQualityDescription(_detectedQuality),
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Theme.of(context).textTheme.bodyMedium?.color,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),

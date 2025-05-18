@@ -710,35 +710,42 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
     }
   }
   
-  String _getWaterQualityText(WaterQualityState quality) {
-    switch (quality) {
-      case WaterQualityState.clean:
-        return 'Clean';
-      case WaterQualityState.slightlyContaminated:
-        return 'Slightly Contaminated';
-      case WaterQualityState.moderatelyContaminated:
-        return 'Moderately Contaminated';
-      case WaterQualityState.heavilyContaminated:
-        return 'Heavily Contaminated';
-      case WaterQualityState.unknown:
-      default:
-        return 'Unknown';
-    }
+String _getWaterQualityText(WaterQualityState quality) {
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return 'Optimum';
+    case WaterQualityState.highPh:
+      return 'High pH';
+    case WaterQualityState.highPhTemp:
+      return 'High pH & Temp';
+    case WaterQualityState.lowPh:
+      return 'Low pH';
+    case WaterQualityState.lowTemp:
+      return 'Low Temperature';
+    case WaterQualityState.lowTempHighPh:
+      return 'Low Temp & High pH';
+    case WaterQualityState.unknown:
+    default:
+      return 'Unknown';
   }
+}
   
-  Color _getWaterQualityColor(WaterQualityState quality) {
-    switch (quality) {
-      case WaterQualityState.clean:
-        return Colors.blue;
-      case WaterQualityState.slightlyContaminated:
-        return Colors.green;
-      case WaterQualityState.moderatelyContaminated:
-        return Colors.orange;
-      case WaterQualityState.heavilyContaminated:
-        return Colors.red;
-      case WaterQualityState.unknown:
-      default:
-        return Colors.grey;
-    }
+Color _getWaterQualityColor(WaterQualityState quality) {
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return Colors.blue;
+    case WaterQualityState.lowTemp:
+      return Colors.green;
+    case WaterQualityState.highPh:
+    case WaterQualityState.lowPh:
+      return Colors.orange;
+    case WaterQualityState.highPhTemp:
+      return Colors.red;
+    case WaterQualityState.lowTempHighPh:
+      return Colors.purple;
+    case WaterQualityState.unknown:
+    default:
+      return Colors.grey;
   }
+}
 }

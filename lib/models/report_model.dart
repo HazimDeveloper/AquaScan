@@ -2,12 +2,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum WaterQualityState {
-  clean,
-  slightlyContaminated,
-  moderatelyContaminated,
-  heavilyContaminated,
-  unknown
+  highPh,       // 'HIGH_PH'
+  highPhTemp,   // 'HIGH_PH; HIGH_TEMP'
+  lowPh,        // 'LOW_PH'
+  lowTemp,      // 'LOW_TEMP'
+  lowTempHighPh,// 'LOW_TEMP;HIGH_PH'
+  optimum,      // 'OPTIMUM'
+  unknown       // Default fallback
 }
+
+
 
 class GeoPoint {
   final double latitude;
@@ -83,6 +87,25 @@ class ReportModel {
     required this.createdAt,
     required this.updatedAt,
   });
+
+static WaterQualityState getStateFromString(String stateString) {
+  switch (stateString.toUpperCase()) {
+    case 'HIGH_PH':
+      return WaterQualityState.highPh;
+    case 'HIGH_PH; HIGH_TEMP':
+      return WaterQualityState.highPhTemp;
+    case 'LOW_PH':
+      return WaterQualityState.lowPh;
+    case 'LOW_TEMP':
+      return WaterQualityState.lowTemp;
+    case 'LOW_TEMP;HIGH_PH':
+      return WaterQualityState.lowTempHighPh;
+    case 'OPTIMUM':
+      return WaterQualityState.optimum;
+    default:
+      return WaterQualityState.unknown;
+  }
+}
 
   factory ReportModel.fromJson(Map<String, dynamic> json) {
     return ReportModel(

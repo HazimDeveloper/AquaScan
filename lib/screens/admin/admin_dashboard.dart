@@ -1012,36 +1012,244 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
   }
   
   String _getWaterQualityText(WaterQualityState quality) {
-    switch (quality) {
-      case WaterQualityState.clean:
-        return 'Clean';
-      case WaterQualityState.slightlyContaminated:
-        return 'Slightly Contaminated';
-      case WaterQualityState.moderatelyContaminated:
-        return 'Moderately Contaminated';
-      case WaterQualityState.heavilyContaminated:
-        return 'Heavily Contaminated';
-      case WaterQualityState.unknown:
-      default:
-        return 'Unknown';
-    }
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return 'Optimum';
+    case WaterQualityState.highPh:
+      return 'High pH';
+    case WaterQualityState.highPhTemp:
+      return 'High pH & Temp';
+    case WaterQualityState.lowPh:
+      return 'Low pH';
+    case WaterQualityState.lowTemp:
+      return 'Low Temperature';
+    case WaterQualityState.lowTempHighPh:
+      return 'Low Temp & High pH';
+    case WaterQualityState.unknown:
+    default:
+      return 'Unknown';
   }
+}
   
-  Color _getWaterQualityColor(WaterQualityState quality) {
-    switch (quality) {
-      case WaterQualityState.clean:
-        return Colors.blue;
-      case WaterQualityState.slightlyContaminated:
-        return Colors.green;
-      case WaterQualityState.moderatelyContaminated:
-        return Colors.orange;
-      case WaterQualityState.heavilyContaminated:
-        return Colors.red;
-      case WaterQualityState.unknown:
-      default:
-        return Colors.grey;
-    }
+ Color _getWaterQualityColor(WaterQualityState quality) {
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return Colors.blue;
+    case WaterQualityState.lowTemp:
+      return Colors.green;
+    case WaterQualityState.highPh:
+    case WaterQualityState.lowPh:
+      return Colors.orange;
+    case WaterQualityState.highPhTemp:
+      return Colors.red;
+    case WaterQualityState.lowTempHighPh:
+      return Colors.purple;
+    case WaterQualityState.unknown:
+    default:
+      return Colors.grey;
   }
+}
+
+void _showWaterQualityDetailsDialog(ReportModel report, double? confidence) {
+  showDialog(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: Text('Water Quality Details'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Water quality indicator
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _getWaterQualityColor(report.waterQuality),
+                    width: 1,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _getWaterQualityIcon(report.waterQuality),
+                          color: _getWaterQualityColor(report.waterQuality),
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _getWaterQualityText(report.waterQuality),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            color: _getWaterQualityColor(report.waterQuality),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (confidence != null) ...[
+                      const SizedBox(height: 12),
+                      LinearProgressIndicator(
+                        value: confidence / 100,
+                        backgroundColor: Colors.grey.shade200,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          _getWaterQualityColor(report.waterQuality),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          'Confidence: ${confidence.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    Text(
+                      _getWaterQualityDescription(report.waterQuality),
+                      style: TextStyle(
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              
+              // Report details heading
+              const Text(
+                'Report Details',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 12),
+              
+              // Report date
+              _buildDetailRow(
+                icon: Icons.calendar_today,
+                title: 'Reported on',
+                value: DateFormat('MMM d, yyyy, h:mm a').format(report.createdAt),
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // Reported by
+              _buildDetailRow(
+                icon: Icons.person,
+                title: 'Reported by',
+                value: report.userName,
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // Location
+              _buildDetailRow(
+                icon: Icons.location_on,
+                title: 'Location',
+                value: report.address,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            child: Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+IconData _getWaterQualityIcon(WaterQualityState quality) {
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return Icons.check_circle;
+    case WaterQualityState.lowTemp:
+      return Icons.ac_unit;
+    case WaterQualityState.highPh:
+    case WaterQualityState.lowPh:
+      return Icons.science;
+    case WaterQualityState.highPhTemp:
+      return Icons.whatshot;
+    case WaterQualityState.lowTempHighPh:
+      return Icons.warning;
+    case WaterQualityState.unknown:
+    default:
+      return Icons.help_outline;
+  }
+}
+
+Widget _buildDetailRow({
+  required IconData icon,
+  required String title,
+  required String value,
+}) {
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(icon, size: 16, color: Colors.grey.shade600),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 12,
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+String _getWaterQualityDescription(WaterQualityState quality) {
+  switch (quality) {
+    case WaterQualityState.optimum:
+      return 'The water has optimal pH and temperature levels for general use.';
+    case WaterQualityState.highPh:
+      return 'The water has high pH levels and may be alkaline. May cause skin irritation or affect taste.';
+    case WaterQualityState.highPhTemp:
+      return 'The water has both high pH and temperature. Not recommended for direct use.';
+    case WaterQualityState.lowPh:
+      return 'The water has low pH levels and may be acidic. May cause corrosion or affect taste.';
+    case WaterQualityState.lowTemp:
+      return 'The water has lower than optimal temperature but otherwise may be suitable for use.';
+    case WaterQualityState.lowTempHighPh:
+      return 'The water has low temperature and high pH levels. Use with caution.';
+    case WaterQualityState.unknown:
+    default:
+      return 'The water quality could not be determined from the provided image.';
+  }
+}
+
   
   String _getTimeAgo(DateTime dateTime) {
     final now = DateTime.now();
