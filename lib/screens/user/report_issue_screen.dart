@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart' as path_provider;
+import 'package:path/path.dart' as path;
 import '../../config/theme.dart';
 import '../../models/report_model.dart';
 import '../../services/auth_service.dart';
@@ -42,6 +44,9 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   GeoPoint? _location;
   String? _autoAddress;
   
+  // Debug flag to log details
+  final bool _debugMode = true;
+  
   @override
   void initState() {
     super.initState();
@@ -51,7 +56,15 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
     _locationService = Provider.of<LocationService>(context, listen: false);
     _apiService = Provider.of<ApiService>(context, listen: false);
     
+    _logDebug('ReportIssueScreen initialized');
     _getCurrentLocation();
+  }
+  
+  // Helper method for debug logging
+  void _logDebug(String message) {
+    if (_debugMode) {
+      print('📱 ReportScreen: $message');
+    }
   }
   
   Future<void> _getCurrentLocation() async {
@@ -60,13 +73,16 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
         _isLoading = true;
       });
       
+      _logDebug('Getting current location...');
       final position = await _locationService.getCurrentLocation();
       
       if (position != null) {
+        _logDebug('Location obtained: ${position.latitude}, ${position.longitude}');
         final address = await _locationService.getAddressFromCoordinates(
           position.latitude,
           position.longitude,
         );
+        _logDebug('Address resolved: $address');
         
         setState(() {
           _location = _locationService.positionToGeoPoint(position);
@@ -75,6 +91,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
           _isLoading = false;
         });
       } else {
+        _logDebug('Failed to get location - null position returned');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Failed to get location. Please check permissions.'),
@@ -85,6 +102,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
         });
       }
     } catch (e) {
+      _logDebug('Error getting location: $e');
       setState(() {
         _isLoading = false;
       });
@@ -98,19 +116,61 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   
   Future<void> _pickImage() async {
     try {
+      _logDebug('Opening image picker...');
       final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
+      final pickedFile = await picker.pickImage(
+        source: ImageSource.camera, 
+        imageQuality: 80,
+        maxWidth: 1280, // Add reasonable max dimensions
+        maxHeight: 960,
+      );
       
       if (pickedFile != null) {
-        setState(() {
-          _pickedImages.add(pickedFile);
-        });
+        _logDebug('Image picked: ${pickedFile.path}');
         
-        // Detect water quality using the file path
-        final imageFile = File(pickedFile.path);
-        _detectWaterQuality(imageFile);
+        try {
+          // Create a copy in a temporary directory
+          final File originalFile = File(pickedFile.path);
+          
+          if (await originalFile.exists()) {
+            final fileSize = await originalFile.length();
+            _logDebug('Original file size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+            
+            setState(() {
+              _pickedImages.add(pickedFile);
+            });
+            
+            // Detect water quality using the file path
+            _detectWaterQuality(originalFile);
+          } else {
+            _logDebug('ERROR: Original file does not exist: ${pickedFile.path}');
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Error: Could not access camera image'),
+              ),
+            );
+          }
+        } catch (e) {
+          _logDebug('Error processing picked image: $e');
+          
+          // Fallback - try to use the original file directly
+          setState(() {
+            _pickedImages.add(pickedFile);
+          });
+          
+          // Try to use the original file for detection
+          final File originalFileObj = File(pickedFile.path);
+          if (await originalFileObj.exists()) {
+            _detectWaterQuality(originalFileObj);
+          } else {
+            _logDebug('Fallback also failed - cannot access file');
+          }
+        }
+      } else {
+        _logDebug('No image picked - user canceled');
       }
     } catch (e) {
+      _logDebug('Error picking image: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error picking image: $e'),
@@ -120,52 +180,54 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   }
   
   Future<void> _detectWaterQuality(File image) async {
-  try {
-    setState(() {
-      _isDetecting = true;
-    });
-    
-    // Add detailed logging
-    print('Starting water quality detection for image: ${image.path}');
-    print('File exists: ${image.existsSync()}');
-    print('File size: ${await image.length()} bytes');
-    
-    // Call the API service and get both quality state and confidence
-    final result = await _apiService.analyzeWaterQualityWithConfidence(image);
-    
-    // Log the result
-    print('Detected water quality: ${result.waterQuality} with confidence: ${result.confidence}%');
-    print('Original class from backend: ${result.originalClass}');
-    
-    setState(() {
-      _detectedQuality = result.waterQuality;
-      _confidence = result.confidence;
-      _originalClass = result.originalClass;
-      _isDetecting = false;
-    });
-  } catch (e) {
-    print('Error in _detectWaterQuality: $e');
-    setState(() {
-      _isDetecting = false;
-      // Set a default quality but no confidence on error
-      _detectedQuality = WaterQualityState.unknown;
-      _confidence = null;
-      _originalClass = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Error detecting water quality: $e'),
-      ),
-    );
+    try {
+      setState(() {
+        _isDetecting = true;
+      });
+      
+      // Add detailed logging
+      _logDebug('Starting water quality detection for image: ${image.path}');
+      _logDebug('File exists: ${image.existsSync()}');
+      _logDebug('File size: ${await image.length()} bytes');
+      
+      // Call the API service and get both quality state and confidence
+      final result = await _apiService.analyzeWaterQualityWithConfidence(image);
+      
+      // Log the result
+      _logDebug('Detected water quality: ${result.waterQuality} with confidence: ${result.confidence}%');
+      _logDebug('Original class from backend: ${result.originalClass}');
+      
+      setState(() {
+        _detectedQuality = result.waterQuality;
+        _confidence = result.confidence;
+        _originalClass = result.originalClass;
+        _isDetecting = false;
+      });
+    } catch (e) {
+      _logDebug('Error in _detectWaterQuality: $e');
+      setState(() {
+        _isDetecting = false;
+        // Set a default quality but no confidence on error
+        _detectedQuality = WaterQualityState.unknown;
+        _confidence = null;
+        _originalClass = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error detecting water quality: $e'),
+        ),
+      );
+    }
   }
-}
   
   void _removeImage(int index) {
+    _logDebug('Removing image at index $index');
     setState(() {
       _pickedImages.removeAt(index);
       
       // Reset detection if all images are removed
       if (_pickedImages.isEmpty) {
+        _logDebug('All images removed, resetting detection state');
         _detectedQuality = WaterQualityState.unknown;
         _confidence = null;
         _originalClass = null;
@@ -176,6 +238,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   Future<void> _submitReport() async {
     if (_formKey.currentState!.validate()) {
       if (_location == null) {
+        _logDebug('Submission failed: location is null');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Location is required. Please try again.'),
@@ -190,22 +253,69 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       
       try {
         // Get current user
+        _logDebug('Getting current user data...');
         final user = await _authService.getUserData(_authService.currentUser!.uid);
+        _logDebug('User data obtained: ${user.name} (${user.uid})');
         
         // Upload images
         List<String> imageUrls = [];
         if (_pickedImages.isNotEmpty) {
+          _logDebug('Preparing to upload ${_pickedImages.length} images');
+          
           // Convert XFiles to File objects for uploading
           List<File> filesToUpload = [];
           for (var xFile in _pickedImages) {
-            filesToUpload.add(File(xFile.path));
+            final file = File(xFile.path);
+            final fileExists = await file.exists();
+            final fileSize = fileExists ? await file.length() : 0;
+            
+            _logDebug('Adding file to upload: ${xFile.path}');
+            _logDebug('File exists: $fileExists, Size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+            
+            if (fileExists && fileSize > 0) {
+              filesToUpload.add(file);
+            } else {
+              _logDebug('WARNING: Skipping non-existent or empty file: ${xFile.path}');
+            }
           }
           
-          imageUrls = await _storageService.uploadImages(filesToUpload, 'reports');
+          if (filesToUpload.isNotEmpty) {
+            _logDebug('Starting image upload to Firebase Storage...');
+            try {
+              imageUrls = await _storageService.uploadImages(filesToUpload, 'reports');
+              _logDebug('Image upload complete. URLs: $imageUrls');
+              
+              if (imageUrls.isEmpty) {
+                _logDebug('Warning: No image URLs returned after upload');
+              } else {
+                for (int i = 0; i < imageUrls.length; i++) {
+                  _logDebug('Image ${i+1} URL: ${imageUrls[i]}');
+                }
+              }
+            } catch (uploadError) {
+              _logDebug('Error uploading images: $uploadError');
+              
+              // Show error but continue creating report without images
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error uploading images: $uploadError. Creating report without images.'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          } else {
+            _logDebug('No valid files to upload');
+          }
+        } else {
+          _logDebug('No images to upload');
         }
         
         // Create report
         final now = DateTime.now();
+        _logDebug('Creating report with title: ${_titleController.text}');
+        _logDebug('Water quality: $_detectedQuality');
+        _logDebug('Image URLs count: ${imageUrls.length}');
+        
         final report = ReportModel(
           id: '',  // Will be set by Firestore
           userId: user.uid,
@@ -221,29 +331,65 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
           updatedAt: now,
         );
         
-        await _databaseService.createReport(report);
+        _logDebug('Saving report to Firestore...');
+        final reportId = await _databaseService.createReport(report);
+        _logDebug('Report created successfully with ID: $reportId');
+        
+        // Verify report was saved with images
+        try {
+          final savedReport = await _databaseService.getReport(reportId);
+          _logDebug('Verified saved report: ${savedReport.title}');
+          _logDebug('Saved report has ${savedReport.imageUrls.length} image URLs');
+          if (savedReport.imageUrls.isNotEmpty) {
+            _logDebug('First image URL: ${savedReport.imageUrls.first}');
+          }
+        } catch (verifyError) {
+          _logDebug('Error verifying saved report: $verifyError');
+        }
+        
+        // Clean up temporary files
+        _cleanupTempFiles();
         
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Report submitted successfully!'),
-            backgroundColor: AppTheme.successColor,
+            backgroundColor: Colors.green,
           ),
         );
         
         // Go back to previous screen
         Navigator.pop(context);
       } catch (e) {
+        _logDebug('Error submitting report: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error submitting report: $e'),
-            backgroundColor: AppTheme.errorColor,
+            backgroundColor: Colors.red,
           ),
         );
       } finally {
         setState(() {
           _isLoading = false;
         });
+      }
+    } else {
+      _logDebug('Form validation failed');
+    }
+  }
+  
+  // Clean up temporary files created during image capture
+  void _cleanupTempFiles() {
+    _logDebug('Cleaning up temporary files...');
+    for (var xFile in _pickedImages) {
+      try {
+        final file = File(xFile.path);
+        if (file.existsSync()) {
+          _logDebug('Deleting temp file: ${xFile.path}');
+          file.deleteSync();
+        }
+      } catch (e) {
+        _logDebug('Error deleting temp file: ${xFile.path} - $e');
       }
     }
   }
@@ -612,6 +758,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
     _titleController.dispose();
     _descriptionController.dispose();
     _addressController.dispose();
+    _logDebug('ReportIssueScreen disposed');
     super.dispose();
   }
 }
