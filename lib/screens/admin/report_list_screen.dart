@@ -1,3 +1,4 @@
+
 // lib/screens/admin/report_list_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -345,7 +346,33 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Title and water quality indicator
+                  // Status badge (if no image) - show at the top of content
+                  if (report.imageUrls.isEmpty)
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isPending
+                              ? AppTheme.warningColor
+                              : AppTheme.successColor,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          isPending ? 'Pending' : 'Resolved',
+                          style: TextStyle(
+                            color: isPending ? Colors.black87 : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                  // Title and water quality indicator (only if there are images)
                   Row(
                     children: [
                       Expanded(
@@ -357,39 +384,41 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
                           ),
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _getWaterQualityColor(report.waterQuality),
-                            width: 1,
+                      // Only show water quality indicator if there are images
+                      if (report.imageUrls.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: _getWaterQualityColor(report.waterQuality),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.water_drop,
+                                color: _getWaterQualityColor(report.waterQuality),
+                                size: 16,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _getWaterQualityText(report.waterQuality),
+                                style: TextStyle(
+                                  color: _getWaterQualityColor(report.waterQuality),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.water_drop,
-                              color: _getWaterQualityColor(report.waterQuality),
-                              size: 16,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _getWaterQualityText(report.waterQuality),
-                              style: TextStyle(
-                                color: _getWaterQualityColor(report.waterQuality),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                   
@@ -563,39 +592,41 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
                   
                   const SizedBox(width: 8),
                   
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _getWaterQualityColor(report.waterQuality),
-                        width: 1,
+                  // Only show water quality info if there are images
+                  if (report.imageUrls.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _getWaterQualityColor(report.waterQuality),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.water_drop,
+                            color: _getWaterQualityColor(report.waterQuality),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _getWaterQualityText(report.waterQuality),
+                            style: TextStyle(
+                              color: _getWaterQualityColor(report.waterQuality),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.water_drop,
-                          color: _getWaterQualityColor(report.waterQuality),
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _getWaterQualityText(report.waterQuality),
-                          style: TextStyle(
-                            color: _getWaterQualityColor(report.waterQuality),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
               
