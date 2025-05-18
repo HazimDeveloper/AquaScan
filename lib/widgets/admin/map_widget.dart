@@ -518,7 +518,7 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
     return polylines;
   }
   
-  List<Marker> _buildAllMarkers() {
+   List<Marker> _buildAllMarkers() {
     final markers = <Marker>[];
     
     // Add current location marker
@@ -527,9 +527,10 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
       markers.add(
         Marker(
           point: LatLng(widget.currentLocation!.latitude, widget.currentLocation!.longitude),
-          width: 60,
-          height: 60,
+          width: 100, // Reduced from 60
+          height: 60, // Reduced from 60
           child: Column(
+            mainAxisSize: MainAxisSize.min, // Add this to prevent overflow
             children: [
               Container(
                 padding: const EdgeInsets.all(4),
@@ -545,25 +546,25 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     ),
                   ],
                 ),
-                child: Icon(Icons.my_location, color: Colors.white, size: 20),
+                child: const Icon(Icons.my_location, color: Colors.white, size: 16), // Reduced size
               ),
               if (widget.routeModel != null)
                 Container(
-                  margin: const EdgeInsets.only(top: 2),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  margin: const EdgeInsets.only(top: 1), // Reduced from 2
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), // Smaller padding
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(2), // Reduced from 4
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.1),
-                        blurRadius: 2,
+                        blurRadius: 1, // Reduced from 2
                       ),
                     ],
                   ),
-                  child: Text(
+                  child: const Text(
                     "Start",
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                    style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold), // Reduced from 10
                   ),
                 ),
             ],
@@ -602,18 +603,19 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
         // Is it a report point or water supply point?
         final bool isReportPoint = i % 2 == 0; // Assuming reports are at even indices
         final IconData markerIcon = isReportPoint ? Icons.location_on : Icons.water_drop;
-        final String labelText = isReportPoint ? "Report" : "Water Supply";
+        final String labelText = isReportPoint ? "Report" : "Water";
         
         markers.add(
           Marker(
             point: LatLng(point.location.latitude, point.location.longitude),
-            width: 60,
-            height: 60,
+            width: 100, // Reduced from 60
+            height: 60, // Reduced from 60
             child: Column(
+              mainAxisSize: MainAxisSize.min, // Add this to prevent overflow
               children: [
                 Container(
-                  width: 30,
-                  height: 30,
+                  width: 24, // Reduced from 30
+                  height: 24, // Reduced from 30
                   decoration: BoxDecoration(
                     color: markerColor,
                     shape: BoxShape.circle,
@@ -621,8 +623,8 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.2),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
+                        blurRadius: 2, // Reduced from 4
+                        offset: const Offset(0, 1), // Reduced from (0, 2)
                       ),
                     ],
                   ),
@@ -630,32 +632,33 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                     child: Icon(
                       markerIcon,
                       color: Colors.white, 
-                      size: 16,
+                      size: 12, // Reduced from 16
                     ),
                   ),
                 ),
-                Container(
-                  margin: const EdgeInsets.only(top: 2),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 2,
+                if (labelText.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 1), // Reduced from 2
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), // Smaller padding
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(2), // Reduced from 4
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      isPartOfShortestRoute ? "$labelText (Shortest)" : labelText,
+                      style: TextStyle(
+                        fontSize: 7, // Reduced from 10
+                        fontWeight: FontWeight.bold,
+                        color: markerColor,
                       ),
-                    ],
-                  ),
-                  child: Text(
-                    isPartOfShortestRoute ? "$labelText (Shortest)" : labelText,
-                    style: TextStyle(
-                      fontSize: 10, 
-                      fontWeight: FontWeight.bold,
-                      color: markerColor,
                     ),
                   ),
-                ),
               ],
             ),
           ),
@@ -673,8 +676,8 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
         markers.add(
           Marker(
             point: LatLng(report.location.latitude, report.location.longitude),
-            width: 40,
-            height: 40,
+            width: 32, // Reduced from 40
+            height: 32, // Reduced from 40
             child: GestureDetector(
               onTap: () {
                 if (widget.onReportTap != null) {
@@ -694,15 +697,15 @@ class _RouteMapWidgetState extends State<RouteMapWidget> with SingleTickerProvid
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.2),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
+                      blurRadius: 2, // Reduced from 4
+                      offset: const Offset(0, 1), // Reduced from (0, 2)
                     ),
                   ],
                 ),
                 child: Icon(
                   Icons.water_drop,
                   color: Colors.white,
-                  size: isSelected ? 20 : 16,
+                  size: isSelected ? 16 : 14, // Reduced sizes
                 ),
               ),
             ),
