@@ -1,9 +1,10 @@
 // lib/screens/user/report_issue_screen.dart
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart' as path_provider;
+import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import '../../config/theme.dart';
 import '../../models/report_model.dart';
@@ -29,6 +30,10 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   final _addressController = TextEditingController();
   
   List<XFile> _pickedImages = []; // Using XFile to store picked images
+  
+  // Map to store image bytes for backup/recovery
+  Map<String, Uint8List> _imageBytesMaps = {};
+  
   bool _isLoading = false;
   bool _isDetecting = false;
   WaterQualityState _detectedQuality = WaterQualityState.unknown;
@@ -121,50 +126,74 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       final pickedFile = await picker.pickImage(
         source: ImageSource.camera, 
         imageQuality: 80,
-        maxWidth: 1280, // Add reasonable max dimensions
+        maxWidth: 1280, 
         maxHeight: 960,
       );
       
       if (pickedFile != null) {
         _logDebug('Image picked: ${pickedFile.path}');
         
+        // Immediately read the bytes from the picked file
+        final Uint8List? imageBytes = await pickedFile.readAsBytes();
+        
+        if (imageBytes == null || imageBytes.isEmpty) {
+          _logDebug('ERROR: Could not read image bytes from picked file');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error: Could not read image data'),
+            ),
+          );
+          return;
+        }
+        
+        _logDebug('Successfully read ${imageBytes.length} bytes from picked image');
+        
+        // Save the bytes to a permanent file in app documents directory
         try {
-          // Create a copy in a temporary directory
-          final File originalFile = File(pickedFile.path);
+          final Directory appDocDir = await getApplicationDocumentsDirectory();
+          final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+          final String newFilePath = '${appDocDir.path}/water_image_$timestamp.jpg';
           
-          if (await originalFile.exists()) {
-            final fileSize = await originalFile.length();
-            _logDebug('Original file size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+          _logDebug('Saving image bytes to permanent file: $newFilePath');
+          final File newFile = File(newFilePath);
+          await newFile.writeAsBytes(imageBytes);
+          
+          // Verify the file was saved
+          final fileExists = await newFile.exists();
+          final fileSize = fileExists ? await newFile.length() : 0;
+          
+          _logDebug('Permanent file created: $fileExists, Size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+          
+          if (fileExists && fileSize > 0) {
+            // Create an XFile from the new path and add to picked images
+            final XFile persistentXFile = XFile(newFile.path);
             
             setState(() {
-              _pickedImages.add(pickedFile);
+              _pickedImages.add(persistentXFile);
             });
             
-            // Detect water quality using the file path
-            _detectWaterQuality(originalFile);
+            // Store the original bytes for backup/recovery
+            _imageBytesMaps[persistentXFile.path] = imageBytes;
+            
+            // Detect water quality
+            _detectWaterQuality(newFile);
+            
+            _logDebug('Image successfully processed and stored');
           } else {
-            _logDebug('ERROR: Original file does not exist: ${pickedFile.path}');
+            _logDebug('ERROR: Failed to create permanent file');
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Error: Could not access camera image'),
+                content: Text('Error: Failed to save image'),
               ),
             );
           }
         } catch (e) {
-          _logDebug('Error processing picked image: $e');
-          
-          // Fallback - try to use the original file directly
-          setState(() {
-            _pickedImages.add(pickedFile);
-          });
-          
-          // Try to use the original file for detection
-          final File originalFileObj = File(pickedFile.path);
-          if (await originalFileObj.exists()) {
-            _detectWaterQuality(originalFileObj);
-          } else {
-            _logDebug('Fallback also failed - cannot access file');
-          }
+          _logDebug('Error saving image to permanent file: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error processing image: $e'),
+            ),
+          );
         }
       } else {
         _logDebug('No image picked - user canceled');
@@ -222,8 +251,13 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   
   void _removeImage(int index) {
     _logDebug('Removing image at index $index');
+    final xFile = _pickedImages[index];
+    
     setState(() {
       _pickedImages.removeAt(index);
+      
+      // Also remove from bytes map
+      _imageBytesMaps.remove(xFile.path);
       
       // Reset detection if all images are removed
       if (_pickedImages.isEmpty) {
@@ -257,54 +291,78 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
         final user = await _authService.getUserData(_authService.currentUser!.uid);
         _logDebug('User data obtained: ${user.name} (${user.uid})');
         
-        // Upload images
+        // Upload images - completely reworked approach
         List<String> imageUrls = [];
         if (_pickedImages.isNotEmpty) {
           _logDebug('Preparing to upload ${_pickedImages.length} images');
           
-          // Convert XFiles to File objects for uploading
-          List<File> filesToUpload = [];
-          for (var xFile in _pickedImages) {
-            final file = File(xFile.path);
-            final fileExists = await file.exists();
-            final fileSize = fileExists ? await file.length() : 0;
+          for (int i = 0; i < _pickedImages.length; i++) {
+            final xFile = _pickedImages[i];
+            _logDebug('Processing image ${i+1}/${_pickedImages.length}: ${xFile.path}');
             
-            _logDebug('Adding file to upload: ${xFile.path}');
-            _logDebug('File exists: $fileExists, Size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+            // First try: Direct file upload
+            try {
+              final File file = File(xFile.path);
+              final bool fileExists = await file.exists();
+              final int fileSize = fileExists ? await file.length() : 0;
+              
+              _logDebug('Checking file: Exists=$fileExists, Size=${(fileSize / 1024).toStringAsFixed(2)} KB');
+              
+              if (fileExists && fileSize > 0) {
+                _logDebug('Uploading file directly: ${file.path}');
+                final url = await _storageService.uploadImage(file, 'reports');
+                _logDebug('Successful direct file upload. URL: $url');
+                imageUrls.add(url);
+                continue; // Skip to next image if successful
+              } else {
+                _logDebug('File does not exist or is empty, trying backup data...');
+              }
+            } catch (e) {
+              _logDebug('Error in direct file upload: $e');
+            }
             
-            if (fileExists && fileSize > 0) {
-              filesToUpload.add(file);
-            } else {
-              _logDebug('WARNING: Skipping non-existent or empty file: ${xFile.path}');
+            // Second try: Use stored bytes data
+            try {
+              final bytes = _imageBytesMaps[xFile.path];
+              if (bytes != null && bytes.isNotEmpty) {
+                _logDebug('Found backup image data (${bytes.length} bytes), uploading...');
+                final url = await _storageService.uploadImageData(bytes, 'reports');
+                _logDebug('Successful data upload from backup. URL: $url');
+                imageUrls.add(url);
+                continue; // Skip to next image if successful
+              } else {
+                _logDebug('No backup data found for: ${xFile.path}');
+              }
+            } catch (e) {
+              _logDebug('Error in backup data upload: $e');
+            }
+            
+            // Third try: Read the XFile again
+            try {
+              _logDebug('Attempting to read XFile directly: ${xFile.path}');
+              final bytes = await xFile.readAsBytes();
+              if (bytes.isNotEmpty) {
+                _logDebug('Successfully read ${bytes.length} bytes from XFile, uploading...');
+                final url = await _storageService.uploadImageData(bytes, 'reports');
+                _logDebug('Successful XFile data upload. URL: $url');
+                imageUrls.add(url);
+              } else {
+                _logDebug('Failed to read any bytes from XFile');
+              }
+            } catch (e) {
+              _logDebug('Error reading or uploading XFile data: $e');
             }
           }
           
-          if (filesToUpload.isNotEmpty) {
-            _logDebug('Starting image upload to Firebase Storage...');
-            try {
-              imageUrls = await _storageService.uploadImages(filesToUpload, 'reports');
-              _logDebug('Image upload complete. URLs: $imageUrls');
-              
-              if (imageUrls.isEmpty) {
-                _logDebug('Warning: No image URLs returned after upload');
-              } else {
-                for (int i = 0; i < imageUrls.length; i++) {
-                  _logDebug('Image ${i+1} URL: ${imageUrls[i]}');
-                }
-              }
-            } catch (uploadError) {
-              _logDebug('Error uploading images: $uploadError');
-              
-              // Show error but continue creating report without images
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Error uploading images: $uploadError. Creating report without images.'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-            }
-          } else {
-            _logDebug('No valid files to upload');
+          _logDebug('Image upload summary: ${imageUrls.length}/${_pickedImages.length} successful');
+          
+          if (imageUrls.isEmpty && _pickedImages.isNotEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Warning: Unable to upload images. Report will be created without images.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
           }
         } else {
           _logDebug('No images to upload');
@@ -347,9 +405,6 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
           _logDebug('Error verifying saved report: $verifyError');
         }
         
-        // Clean up temporary files
-        _cleanupTempFiles();
-        
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -357,6 +412,9 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
             backgroundColor: Colors.green,
           ),
         );
+        
+        // Clear image bytes map
+        _imageBytesMaps.clear();
         
         // Go back to previous screen
         Navigator.pop(context);

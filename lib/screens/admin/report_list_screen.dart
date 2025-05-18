@@ -1,9 +1,12 @@
+// Updated report_list_screen.dart with improved image handling
+
 // lib/screens/admin/report_list_screen.dart
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart'; // Add this dependency 
 import 'package:water_watch/widgets/common/custom_bottom.dart';
 import '../../config/theme.dart';
 import '../../models/report_model.dart';
@@ -34,6 +37,16 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
   
   // Map to store confidence scores for each report
   Map<String, double> _confidenceScores = {};
+  
+  // Debug flag for logging
+  final bool _debugMode = true;
+  
+  // Helper method for debug logging
+  void _logDebug(String message) {
+    if (_debugMode) {
+      print('📱 ReportListScreen: $message');
+    }
+  }
   
   @override
   void initState() {
@@ -70,12 +83,16 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
       final resolvedReports = await databaseService.getResolvedReportsList();
       
       // Log report data for debugging
+      _logDebug('Loaded ${pendingReports.length} pending reports and ${resolvedReports.length} resolved reports');
+      
       for (var report in [...pendingReports, ...resolvedReports]) {
-        print('Report ID: ${report.id}');
-        print('Report title: ${report.title}');
-        print('Report has ${report.imageUrls.length} images');
+        _logDebug('Report ID: ${report.id}');
+        _logDebug('Report title: ${report.title}');
+        _logDebug('Report has ${report.imageUrls.length} images');
         if (report.imageUrls.isNotEmpty) {
-          print('First image URL: ${report.imageUrls.first}');
+          for (int i = 0; i < report.imageUrls.length; i++) {
+            _logDebug('Image URL ${i+1}: ${report.imageUrls[i]}');
+          }
         }
       }
       
@@ -96,14 +113,16 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
             // For demo purposes, generate a confidence between 60-95%
             final confidence = 60.0 + (report.id.hashCode % 35);
             confidenceMap[report.id] = confidence;
+            _logDebug('Generated confidence score for report ${report.id}: $confidence');
           } catch (e) {
             // If analysis fails, set a default confidence
             confidenceMap[report.id] = 0.0;
-            print('Error getting confidence for report ${report.id}: $e');
+            _logDebug('Error getting confidence for report ${report.id}: $e');
           }
         } else {
           // No image, no confidence score - just use the state assigned during report creation
           confidenceMap[report.id] = 0.0;
+          _logDebug('No images for report ${report.id}, setting confidence to 0.0');
         }
       }
       
@@ -114,11 +133,11 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
         _isLoading = false;
       });
     } catch (e) {
+      _logDebug('Error loading reports: $e');
       setState(() {
         _errorMessage = e.toString();
         _isLoading = false;
       });
-      print('Error loading reports: $e');
     }
   }
   
@@ -318,267 +337,210 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top row with image thumbnail and title/status info
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // Image section (if available)
+            if (report.imageUrls.isNotEmpty)
+              Stack(
                 children: [
-                  // Image thumbnail (if available)
-                  if (report.imageUrls.isNotEmpty)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SizedBox(
-                        width: 80,
-                        height: 80,
-                        child: Image.network(
-                          report.imageUrls.first,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Center(
-                              child: CircularProgressIndicator(
-                                value: loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                        loadingProgress.expectedTotalBytes!
-                                    : null,
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey[200],
-                              child: const Icon(
-                                Icons.error_outline,
-                                color: Colors.grey,
-                                size: 30,
-                              ),
-                            );
-                          },
+                  _buildNetworkImage(report.imageUrls.first, height: 150),
+                  
+                  // Status badge
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isPending
+                            ? AppTheme.warningColor
+                            : AppTheme.successColor,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        isPending ? 'Pending' : 'Resolved',
+                        style: TextStyle(
+                          color: isPending ? Colors.black87 : Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
                         ),
                       ),
                     ),
-                  // Show placerholder icon if no image
+                  ),
+                ],
+              ),
+            
+            // Content section
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Status badge (if no image) - show at the top of content
                   if (report.imageUrls.isEmpty)
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        Icons.image_not_supported_outlined,
-                        size: 30,
-                        color: Colors.grey[400],
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isPending
+                              ? AppTheme.warningColor
+                              : AppTheme.successColor,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          isPending ? 'Pending' : 'Resolved',
+                          style: TextStyle(
+                            color: isPending ? Colors.black87 : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                     ),
                     
-                  const SizedBox(width: 16),
-                  
-                  // Title, status, quality info section
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Title
-                        Text(
+                  // Title and water quality indicator
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
                           report.title,
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
-                        
-                        const SizedBox(height: 8),
-                        
-                        // Status and quality indicators in a row
-                        Row(
+                      ),
+                      // Water quality indicator badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _getWaterQualityColor(report.waterQuality),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Status badge
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isPending
-                                    ? AppTheme.warningColor
-                                    : AppTheme.successColor,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                isPending ? 'Pending' : 'Resolved',
-                                style: TextStyle(
-                                  color: isPending ? Colors.black87 : Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
-                              ),
+                            Icon(
+                              _getWaterQualityIcon(report.waterQuality),
+                              color: _getWaterQualityColor(report.waterQuality),
+                              size: 16,
                             ),
-                            
-                            const SizedBox(width: 6),
-                            
-                            // Water quality indicator
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _getWaterQualityColor(report.waterQuality).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: _getWaterQualityColor(report.waterQuality),
-                                  width: 1,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _getWaterQualityIcon(report.waterQuality),
-                                    color: _getWaterQualityColor(report.waterQuality),
-                                    size: 12,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _getWaterQualityText(report.waterQuality),
-                                    style: TextStyle(
-                                      color: _getWaterQualityColor(report.waterQuality),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
+                            const SizedBox(width: 4),
+                            Text(
+                              _getWaterQualityText(report.waterQuality),
+                              style: TextStyle(
+                                color: _getWaterQualityColor(report.waterQuality),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
                               ),
                             ),
                           ],
-                        ),
-                        
-                        // Only show confidence if it's significant (over 50%)
-                        if (confidenceScore > 50)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      LinearProgressIndicator(
-                                        value: confidenceScore / 100,
-                                        backgroundColor: Colors.grey.shade200,
-                                        valueColor: AlwaysStoppedAnimation<Color>(
-                                          _getWaterQualityColor(report.waterQuality),
-                                        ),
-                                        minHeight: 4,
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'Confidence: ${confidenceScore.toStringAsFixed(1)}%',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: AppTheme.textSecondaryColor,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // Description section
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Text(
-                report.description,
-                style: TextStyle(
-                  color: AppTheme.textSecondaryColor,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            
-            // Location, user, and date info
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
-                children: [
-                  // Location info
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.location_on,
-                          size: 16,
-                          color: AppTheme.textSecondaryColor,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            report.address,
-                            style: TextStyle(
-                              color: AppTheme.textSecondaryColor,
-                              fontSize: 12,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  const SizedBox(width: 16),
-                  
-                  // User info
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.person,
-                        size: 16,
-                        color: AppTheme.textSecondaryColor,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        report.userName,
-                        style: TextStyle(
-                          color: AppTheme.textSecondaryColor,
-                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                   
-                  const SizedBox(width: 16),
+                  const SizedBox(height: 8),
                   
-                  // Date info
+                  // Description
+                  Text(
+                    report.description,
+                    style: TextStyle(
+                      color: AppTheme.textSecondaryColor,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Location, user, and date info
                   Row(
                     children: [
-                      Icon(
-                        Icons.calendar_today,
-                        size: 16,
-                        color: AppTheme.textSecondaryColor,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        formattedDate,
-                        style: TextStyle(
-                          color: AppTheme.textSecondaryColor,
-                          fontSize: 12,
+                      // Location info
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.location_on,
+                              size: 16,
+                              color: AppTheme.textSecondaryColor,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                report.address,
+                                style: TextStyle(
+                                  color: AppTheme.textSecondaryColor,
+                                  fontSize: 12,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                      
+                      const SizedBox(width: 16),
+                      
+                      // User info
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.person,
+                            size: 16,
+                            color: AppTheme.textSecondaryColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            report.userName,
+                            style: TextStyle(
+                              color: AppTheme.textSecondaryColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(width: 16),
+                      
+                      // Date info
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.calendar_today,
+                            size: 16,
+                            color: AppTheme.textSecondaryColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            formattedDate,
+                            style: TextStyle(
+                              color: AppTheme.textSecondaryColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -587,6 +549,48 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
             ),
           ],
         ),
+      ),
+    );
+  }
+  
+  // Improved network image widget with better error handling and caching
+  Widget _buildNetworkImage(String imageUrl, {double height = 200, double? width}) {
+    _logDebug('Building network image: $imageUrl');
+    return SizedBox(
+      height: height,
+      width: width ?? double.infinity,
+      child: CachedNetworkImage(
+        imageUrl: imageUrl,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+        errorWidget: (context, url, error) {
+          _logDebug('Error loading image: $error, URL: $url');
+          return Container(
+            color: Colors.grey[200],
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                const Icon(
+                  Icons.image_not_supported,
+                  color: Colors.grey,
+                  size: 50,
+                ),
+                Positioned(
+                  bottom: 10,
+                  child: Text(
+                    'Error loading image',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -601,65 +605,20 @@ class _ReportListScreenState extends State<ReportListScreen> with SingleTickerPr
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-                              if (report.imageUrls.isNotEmpty)
-                  SizedBox(
-                    height: 200,
-                    child: PageView.builder(
-                      itemCount: report.imageUrls.length,
-                      itemBuilder: (context, index) {
-                        // Debug info
-                        print('Loading dialog image from URL: ${report.imageUrls[index]}');
-                        
-                        return Image.network(
-                          report.imageUrls[index],
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Center(
-                              child: CircularProgressIndicator(
-                                value: loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                        loadingProgress.expectedTotalBytes!
-                                    : null,
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            // Log error for debugging
-                            print('Error loading dialog image: $error');
-                            return Container(
-                              color: Colors.grey[200],
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(
-                                    Icons.broken_image,
-                                    color: Colors.grey,
-                                    size: 50,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Image could not be loaded',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Error: ${error.toString().substring(0, min(50, error.toString().length))}...',
-                                    style: TextStyle(
-                                      color: Colors.grey[500],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+              // Image carousel if available
+              if (report.imageUrls.isNotEmpty)
+                SizedBox(
+                  height: 200,
+                  child: PageView.builder(
+                    itemCount: report.imageUrls.length,
+                    itemBuilder: (context, index) {
+                      // Debug info
+                      _logDebug('Loading dialog image ${index+1}/${report.imageUrls.length} from URL: ${report.imageUrls[index]}');
+                      
+                      return _buildNetworkImage(report.imageUrls[index]);
+                    },
                   ),
+                ),
               
               const SizedBox(height: 16),
               
